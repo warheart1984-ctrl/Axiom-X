@@ -1,0 +1,15 @@
+[package]
+name = "axiom-x-init"
+version = "0.1.0"
+edition = "2021"
+description = "Axiom-X userspace init binary"
+
+[dependencies]
+axiom-x-sys = { path = "../axiom-x-sys" }
+axiom-x-math = { path = "../axiom-x-math" }
+heapless = { workspace = true }
+bitflags = { workspace = true }
+
+[features]
+default = []
+asm = []

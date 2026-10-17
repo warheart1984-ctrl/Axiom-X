@@ -1,0 +1,45 @@
+YAXIOM-X BOOT
+Parsing multiboot2 info...
+  Kernel: 0x100000 - 0x187828
+  Memory regions: 7
+Initializing kernel frame allocator...
+  Frame allocator will be initialized by kernel
+Initializing boot allocator...
+Setting up page tables...
+  PML4 at 0x188000
+Initializing early heap...
+Initializing CPU features...
+Initializing architecture...
+Initializing movie subsystem...
+Creating process table...
+  ProcessTable: 536616 bytes
+Initializing scheduler...
+Creating idle process...
+Creating init process...
+  Init PID: 1
+Starting scheduler...
+PID 1 (init) running on its own stack; interrupts enabled
+  init heartbeat: 100 timer wakes
+  init heartbeat: 200 timer wakes
+  init heartbeat: 300 timer wakes
+  init heartbeat: 400 timer wakes
+  init heartbeat: 500 timer wakes
+  init heartbeat: 600 timer wakes
+  init heartbeat: 700 timer wakes
+  init heartbeat: 800 timer wakes
+  init heartbeat: 900 timer wakes
+  init heartbeat: 1000 timer wakes
+  init heartbeat: 1100 timer wakes
+  init heartbeat: 1200 timer wakes
+  init heartbeat: 1300 timer wakes
+  init heartbeat: 1400 timer wakes
+  init heartbeat: 1500 timer wakes
+  init heartbeat: 1600 timer wakes
+  init heartbeat: 1700 timer wakes
+  init heartbeat: 1800 timer wakes
+  init heartbeat: 1900 timer wakes
+  init heartbeat: 2000 timer wakes
+  init heartbeat: 2100 timer wakes
+  init heartbeat: 2200 timer wakes
+  init heartbeat: 2300 timer wakes
+  init heartbeat: 2400 timer wakes

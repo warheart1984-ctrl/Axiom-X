@@ -1,0 +1,47 @@
+thread 'rustc' panicked at /rustc-dev/7608eb7b07eaf93f16d7cf5bcb2098eca87503df/compiler\rustc_errors\src\lib.rs:1528:17:
+aborting due to `-Z treat-err-as-bug=1`
+stack backtrace:
+   0:     0x7ffb0a1e7f0f - std::backtrace_rs::backtrace::win64::trace
+                               at /rustc/7608eb7b07eaf93f16d7cf5bcb2098eca87503df/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1:     0x7ffb0a1e7f0f - std::backtrace_rs::backtrace::trace_unsynchronized
+                               at /rustc/7608eb7b07eaf93f16d7cf5bcb2098eca87503df/library\std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2:     0x7ffb0a1e7f0f - std::backtrace::Backtrace::create
+                               at /rustc/7608eb7b07eaf93f16d7cf5bcb2098eca87503df/library\std\src\backtrace.rs:331
+   3:     0x7ffb0a1e7e5a - std::backtrace::Backtrace::force_capture
+                               at /rustc/7608eb7b07eaf93f16d7cf5bcb2098eca87503df/library\std\src\backtrace.rs:312
+   4:     0x7ffb0bd26a65 - core[17c84dd96ac2a2f0]::slice::sort::unstable::heapsort::heapsort::<((rustc_lint_defs[4aa9adbd338a5436]::Level, &str), usize), <((rustc_lint_defs[4aa9adbd338a5436]::Level, &str), usize) as core[17c84dd96ac2a2f0]::cmp::PartialOrd>::lt>
+   5:     0x7ffb0a1fc904 - std::panicking::panic_with_hook
+                               at /rustc/7608eb7b07eaf93f16d7cf5bcb2098eca87503df/library\std\src\panicking.rs:823
+   6:     0x7ffb0a1e01d4 - std::panicking::panic_handler::closure$0
+                               at /rustc/7608eb7b07eaf93f16d7cf5bcb2098eca87503df/library\std\src\panicking.rs:681
+   7:     0x7ffb0a1dd62f - std::sys::backtrace::__rust_end_short_backtrace<std::panicking::panic_handler::closure_env$0,never$>
+                               at /rustc/7608eb7b07eaf93f16d7cf5bcb2098eca87503df/library\std\src\sys\backtrace.rs:182
+   8:     0x7ffb0a1e0cee - std::panicking::panic_handler
+                               at /rustc/7608eb7b07eaf93f16d7cf5bcb2098eca87503df/library\std\src\panicking.rs:679
+   9:     0x7ffb0e1996dd - core::panicking::panic_fmt
+                               at /rustc/7608eb7b07eaf93f16d7cf5bcb2098eca87503df/library\core\src\panicking.rs:80
+  10:     0x7ffb0e00ecd6 - <rustc_errors[21f786f347f59de]::DiagCtxtHandle>::try_steal_replace_and_emit_err
+  11:     0x7ffb0a14d77b - <rustc_stable_hash[94f89301e40bb7c8]::sip128::SipHasher128>::short_write_process_buffer::<2usize>
+  12:     0x7ffb0693cc6f - std[fb51f241103a29c2]::sys::backtrace::__rust_begin_short_backtrace::<std[fb51f241103a29c2]::thread::lifecycle::spawn_unchecked<ctrlc[6f6489ff76a6855]::set_handler_inner<rustc_driver_impl[ee2157427ae0c8c7]::install_ctrlc_handler::{closure#0}>::{closure#0}, ()>::{closure#1}::{closure#0}::{closure#0}, ()>
+  13:     0x7ffb0693766f - llvm::function_ref<void __cdecl(llvm::CallInst * __ptr64)>::callback_fn<`llvm::IRBuilderBase::CreateIntrinsic'::`1'::<lambda_1_1> >
+  14:     0x7ffb0a15a77a - <rustc_errors[21f786f347f59de]::DiagCtxtHandle>::has_errors_excluding_lint_errors
+  15:     0x7ffb0a15722a - <rustc_errors[21f786f347f59de]::DiagCtxtHandle>::emit_diagnostic
+  16:     0x7ffb0a1648be - <() as rustc_errors[21f786f347f59de]::diagnostic::EmissionGuarantee>::emit_producing_guarantee
+  17:     0x7ffb09c92659 - <rustc_codegen_ssa[dfd28973a8885251]::back::write::SharedEmitterMain>::check
+  18:     0x7ffb06995405 - <rustc_interface[ff77c315b47f7f18]::passes::LintStoreExpandImpl as rustc_expand[a25b88d0050eac61]::base::LintStoreExpand>::pre_expansion_lint
+  19:     0x7ffb06a007e3 - <rustc_codegen_llvm[136320e49d3680a0]::LlvmCodegenBackend as rustc_codegen_ssa[dfd28973a8885251]::traits::backend::CodegenBackend>::codegen_crate
+  20:     0x7ffb0696ed86 - <rustc_interface[ff77c315b47f7f18]::queries::Linker>::codegen_and_build_linker
+  21:     0x7ffb0693fd22 - std[fb51f241103a29c2]::sys::backtrace::__rust_begin_short_backtrace::<std[fb51f241103a29c2]::thread::lifecycle::spawn_unchecked<ctrlc[6f6489ff76a6855]::set_handler_inner<rustc_driver_impl[ee2157427ae0c8c7]::install_ctrlc_handler::{closure#0}>::{closure#0}, ()>::{closure#1}::{closure#0}::{closure#0}, ()>
+  22:     0x7ffb069394c5 - RINvNtNtCslzLNLcVSHD2_3std3sys9backtrace28___rust_begin_short_backtraceNCNCINvNtCslVQEntvOo0S_15rustc_interface4util26run_in_thread_with_globalsNCINvB1e_31run_in_thread_pool_with_globalsNCINvNtB1g_9interface12run_compileruNCNvCskryP38z6U6N_17rustc_driver_i
+  23:     0x7ffb06944677 - std[fb51f241103a29c2]::sys::backtrace::__rust_begin_short_backtrace::<std[fb51f241103a29c2]::thread::lifecycle::spawn_unchecked<ctrlc[6f6489ff76a6855]::set_handler_inner<rustc_driver_impl[ee2157427ae0c8c7]::install_ctrlc_handler::{closure#0}>::{closure#0}, ()>::{closure#1}::{closure#0}::{closure#0}, ()>
+  24:     0x7ffb0a207563 - std::sys::thread::windows::impl$0::new::thread_start
+                               at /rustc/7608eb7b07eaf93f16d7cf5bcb2098eca87503df/library\std\src\sys\thread\windows.rs:58
+  25:     0x7ffbd2f27374 - BaseThreadInitThunk
+  26:     0x7ffbd4f3cc91 - RtlUserThreadStart
+
+
+rustc version: 1.99.0-nightly (7608eb7b0 2026-08-05)
+platform: x86_64-pc-windows-msvc
+
+query stack during panic:
+end of query stack

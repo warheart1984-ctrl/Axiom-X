@@ -1,0 +1,12 @@
+# Build output and large binaries
+target/
+*.iso
+evidence/iso/
+evidence/tmp/
+
+# Stale / generated artifacts (not source)
+/iso/
+*.orig
+*.lst
+# Stray numbered files from an accidental shell redirect
+/axiom-x-capability/src/[0-9]*

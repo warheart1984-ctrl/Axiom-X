@@ -1,0 +1,17 @@
+[package]
+name = "axiom-x-sys"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+axiom-x-math = { path = "../axiom-x-math", default-features = false }
+bitflags = { workspace = true }
+heapless = { workspace = true }
+zerocopy = { workspace = true }
+log = { workspace = true }
+
+[features]
+default = []
+std = ["axiom-x-math/std", "zerocopy/std"]

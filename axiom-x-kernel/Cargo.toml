@@ -1,0 +1,31 @@
+[package]
+name = "axiom-x-kernel"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+rust-version = "1.80"
+
+[dependencies]
+axiom-x-math = { path = "../axiom-x-math", default-features = false }
+axiom-x-arch-traits = { path = "../axiom-x-arch-traits", default-features = false }
+axiom-x-arch = { path = "../axiom-x-arch", default-features = false }
+axiom-x-arch-x86_64 = { path = "../axiom-x-arch-x86_64", default-features = false }
+axiom-x-boot = { path = "../axiom-x-boot", default-features = false }
+axiom-x-sys = { path = "../axiom-x-sys", default-features = false }
+darz-kernel = { path = "../../Wolf-CoG-OS/darz-kernel", default-features = false }
+bitflags = { workspace = true }
+heapless = { workspace = true }
+spin = { workspace = true }
+volatile = { workspace = true }
+log = { workspace = true }
+
+[features]
+default = ["std"]
+
+# std: host-compilable library (default, used by cargo check/test on the host).
+# Without this feature the crate builds freestanding (no_std) for bare-metal
+# targets; the panic handler, OOM handler, and eh_personality lang item are
+# only defined then (std defines them on the host build).
+std = []
+freestanding = []

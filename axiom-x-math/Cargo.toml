@@ -1,0 +1,15 @@
+[package]
+name = "axiom-x-math"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+heapless = { workspace = true }
+bitflags = { workspace = true }
+libm = { version = "0.2", default-features = false }
+
+[features]
+default = []
+std = []

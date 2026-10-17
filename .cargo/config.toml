@@ -1,0 +1,28 @@
+# Per-target config for cross-compilation to x86_64-unknown-none
+# Use: cargo build --target x86_64-unknown-none
+
+[target.x86_64-unknown-none]
+linker = "rust-lld"
+rustflags = [
+  "-C", "link-arg=--no-rosegment",
+  "-C", "default-linker-libraries",
+  "-C", "relocation-model=static",
+  "-C", "link-arg=-no-pie",
+  "-C", "code-model=large",
+  "-Z", "function-sections",
+]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = []
+
+[profile.dev]
+debug = true
+overflow-checks = true
+opt-level = 0
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

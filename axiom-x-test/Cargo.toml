@@ -1,0 +1,19 @@
+[package]
+name = "axiom-x-test"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+axiom-x-math = { path = "../axiom-x-math" }
+axiom-x-arch-traits = { path = "../axiom-x-arch-traits" }
+axiom-x-arch-x86_64 = { path = "../axiom-x-arch-x86_64" }
+axiom-x-boot = { path = "../axiom-x-boot" }
+axiom-x-sys = { path = "../axiom-x-sys" }
+proptest = { workspace = true }
+quickcheck = { workspace = true }
+criterion = { workspace = true }
+
+[features]
+default = []

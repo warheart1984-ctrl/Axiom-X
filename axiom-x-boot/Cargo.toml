@@ -1,0 +1,49 @@
+[package]
+name = "axiom-x-boot"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+axiom-x-math = { path = "../axiom-x-math", default-features = false }
+axiom-x-arch-traits = { path = "../axiom-x-arch-traits", default-features = false }
+axiom-x-arch = { path = "../axiom-x-arch", default-features = false }
+multiboot2 = { workspace = true }
+x86_64 = { workspace = true, features = ["abi_x86_interrupt"] }
+bitflags = { workspace = true }
+heapless = { workspace = true }
+spin = { workspace = true }
+volatile = { workspace = true }
+zerocopy = { workspace = true }
+tinyvec = { workspace = true }
+log = { workspace = true }
+
+# UEFI support (optional, only with `uefi` feature)
+uefi = { version = "0.20", default-features = false, features = ["unstable"], optional = true }
+uefi-services = { version = "0.11", default-features = false, optional = true }
+
+[features]
+default = ["std"]
+
+# std: host-compilable library (default, used by cargo check/test on the host).
+# Without this feature the crate builds freestanding (no_std) for bare-metal
+# targets; the panic handler and global allocator are only defined then.
+std = []
+freestanding = []
+uefi = ["dep:uefi", "dep:uefi-services"]
+
+[[bin]]
+name = "kernel"
+path = "src/bin/kernel.rs"
+# The bootable kernel is a no_std, no_main multiboot2 image for
+# x86_64-unknown-none �?" it cannot be built or run as a host test harness.
+# required-features keeps it out of host builds (`cargo build --workspace`).
+test = false
+required-features = ["freestanding"]
+
+[[bin]]
+name = "kernel-uefi"
+path = "src/bin/kernel_uefi.rs"
+test = false
+required-features = ["uefi"]

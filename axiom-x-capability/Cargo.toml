@@ -1,0 +1,23 @@
+[package]
+name = "axiom-x-capability"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+axiom-x-principal = { path = "../axiom-x-principal" }
+bitflags = { workspace = true }
+heapless = { workspace = true }
+spin = { workspace = true }
+zerocopy = { workspace = true, features = ["derive"] }
+
+[features]
+default = ["std"]
+std = []
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
