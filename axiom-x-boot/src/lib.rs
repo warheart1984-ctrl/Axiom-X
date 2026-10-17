@@ -41,6 +41,10 @@ macro_rules! serial_print {
     }};
 }
 
+// Ring-3 programs (declared after `serial_print!` so it can use the macro).
+#[cfg(feature = "freestanding")]
+mod user;
+
 // Movie subsystem
 pub mod movie;
 
@@ -183,9 +187,9 @@ unsafe fn map_2mib_page(pml4: *mut PageTable, virt: u64, phys: u64, flags: PageT
     let pd_idx = (virt >> 21) & 0x1FF;
 
     // Get or create PDPT
-    let pdpt = get_or_create_table(pml4, pml4_idx);
+    let pdpt = get_or_create_table(pml4, pml4_idx, false);
     // Get or create PD
-    let pd = get_or_create_table(pdpt, pdpt_idx);
+    let pd = get_or_create_table(pdpt, pdpt_idx, false);
     // Map 2 MiB page in PD
     let pd = unsafe { &mut *pd };
     pd[pd_idx as usize].set_addr(PhysAddr::new(phys), flags | PageTableFlags::HUGE_PAGE);
@@ -198,21 +202,31 @@ unsafe fn map_4kib_page(pml4: *mut PageTable, virt: u64, phys: u64, flags: PageT
     let pd_idx = (virt >> 21) & 0x1FF;
     let pt_idx = (virt >> 12) & 0x1FF;
 
-    let pdpt = get_or_create_table(pml4, pml4_idx);
-    let pd = get_or_create_table(pdpt, pdpt_idx);
-    let pt = get_or_create_table(pd, pd_idx);
+    // x86 checks U/S at every level: a user leaf needs USER on its parents.
+    let user = flags.contains(PageTableFlags::USER_ACCESSIBLE);
+    let pdpt = get_or_create_table(pml4, pml4_idx, user);
+    let pd = get_or_create_table(pdpt, pdpt_idx, user);
+    let pt = get_or_create_table(pd, pd_idx, user);
     let pt = unsafe { &mut *pt };
     pt[pt_idx as usize].set_addr(PhysAddr::new(phys), flags);
 }
 
-/// Get or create next-level page table
-unsafe fn get_or_create_table(table: *mut PageTable, index: u64) -> *mut PageTable {
+/// Get or create next-level page table. With `user`, the entry also gets
+/// USER_ACCESSIBLE (leaf permissions still decide what ring 3 can touch).
+unsafe fn get_or_create_table(table: *mut PageTable, index: u64, user: bool) -> *mut PageTable {
     let table = unsafe { &mut *table };
     let entry = &mut table[index as usize];
     if entry.is_unused() {
         let frame = alloc_boot_frame().expect("out of memory for page table");
         entry.set_addr(frame.start_address(), PageTableFlags::PRESENT | PageTableFlags::WRITABLE);
         ptr::write_bytes(frame.start_address().as_u64() as *mut PageTable, 0, 1);
+    }
+    assert!(
+        !entry.flags().contains(PageTableFlags::HUGE_PAGE),
+        "cannot map a 4 KiB page inside a huge-page mapping"
+    );
+    if user {
+        entry.set_flags(entry.flags() | PageTableFlags::USER_ACCESSIBLE);
     }
     let phys = entry.addr().as_u64();
     phys as *mut PageTable
@@ -725,6 +739,15 @@ extern "C" fn idle_loop() -> ! {
 extern "C" fn init_process() -> ! {
     log::info!("Init process started");
     serial_puts("PID 1 (init) running on its own stack; interrupts enabled\n");
+
+    // Hand the CPU to the ring-3 programs; init is parked (its context is
+    // never saved) and the process-end hook takes over from there.
+    #[cfg(feature = "freestanding")]
+    {
+        axiom_x_arch::syscall::set_process_end_hook(user::on_process_end);
+        user::park_init(axiom_x_arch::process::current_pid());
+        user::run_next_program();
+    }
 
     // TODO: Mount root filesystem, start userspace init
     // Heartbeat on serial so boot evidence shows timer IRQs resuming PID 1.

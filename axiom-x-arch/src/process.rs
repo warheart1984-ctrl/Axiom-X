@@ -109,9 +109,10 @@ impl CpuContext {
             rip: entry,
             rsp: user_stack,
             rflags: 0x202, // IF=1
-            cs: 0x1B,      // User code segment (ring 3)
-            ss: 0x23,      // User data segment (ring 3)
-            ds: 0x23, es: 0x23, fs: 0x23, gs: 0x23,
+            cs: crate::gdt::USER_CS, // ring-3 code (0x23)
+            ss: crate::gdt::USER_DS, // ring-3 data (0x1B)
+            ds: crate::gdt::USER_DS, es: crate::gdt::USER_DS,
+            fs: crate::gdt::USER_DS, gs: crate::gdt::USER_DS,
             cr3,
             ..Default::default()
         }
@@ -563,8 +564,9 @@ mod tests {
         let ctx = CpuContext::new_user(0x400000, 0x7FFFFFFFFFFF, 0x100000);
         assert_eq!(ctx.rip, 0x400000);
         assert_eq!(ctx.rsp, 0x7FFFFFFFFFFF);
-        assert_eq!(ctx.cs, 0x1B);
-        assert_eq!(ctx.ss, 0x23);
+        // sysret layout: user data at 0x18, user code at 0x20 (RPL 3).
+        assert_eq!({ ctx.cs }, 0x23);
+        assert_eq!({ ctx.ss }, 0x1B);
     }
 
     #[test]

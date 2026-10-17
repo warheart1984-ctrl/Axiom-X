@@ -1,0 +1,56 @@
+YAXIOM-X BOOT
+Parsing multiboot2 info...
+  Kernel: 0x100000 - 0x1d7910
+  Memory regions: 7
+Initializing kernel frame allocator...
+  Frame allocator will be initialized by kernel
+Initializing boot allocator...
+Setting up page tables...
+  PML4 at 0x1d8000
+Initializing early heap...
+Initializing CPU features...
+Initializing architecture...
+Initializing movie subsystem...
+Creating process table...
+  ProcessTable: 536616 bytes
+Initializing scheduler...
+Creating idle process...
+Creating init process...
+  Init PID: 1
+Starting scheduler...
+PID 1 (init) running on its own stack; interrupts enabled
+[kernel] starting user program 'hello' as pid 2 (171 bytes at 0x8000000000, ring 3)
+hello from ring 3
+[syscall] pid=2 write(nr=1, a0=0x1) -> 18
+[syscall] pid=2 write(nr=1, a0=0x1) -> -14
+ring 3: kernel pointer refused with -EFAULT
+[syscall] pid=2 write(nr=1, a0=0x1) -> 44
+[syscall] pid=2 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 2 ended with code 0
+[kernel] starting user program 'probe' as pid 3 (27 bytes at 0x8000000000, ring 3)
+[kernel] pid=3 killed: page fault in ring 3 at rip=0x800000000a (0xffff800000100000)
+[kernel] pid 3 ended with code 139
+[kernel] all user programs finished; idling
+  idle heartbeat: 100 timer wakes
+  idle heartbeat: 200 timer wakes
+  idle heartbeat: 300 timer wakes
+  idle heartbeat: 400 timer wakes
+  idle heartbeat: 500 timer wakes
+  idle heartbeat: 600 timer wakes
+  idle heartbeat: 700 timer wakes
+  idle heartbeat: 800 timer wakes
+  idle heartbeat: 900 timer wakes
+  idle heartbeat: 1000 timer wakes
+  idle heartbeat: 1100 timer wakes
+  idle heartbeat: 1200 timer wakes
+  idle heartbeat: 1300 timer wakes
+  idle heartbeat: 1400 timer wakes
+  idle heartbeat: 1500 timer wakes
+  idle heartbeat: 1600 timer wakes
+  idle heartbeat: 1700 timer wakes
+  idle heartbeat: 1800 timer wakes
+  idle heartbeat: 1900 timer wakes
+  idle heartbeat: 2000 timer wakes
+  idle heartbeat: 2100 timer wakes
+  idle heartbeat: 2200 timer wakes
+  idle heartbeat: 2300 timer wakes

@@ -152,8 +152,28 @@ extern "x86-interrupt" fn general_protection_fault_handler(frame: InterruptStack
 }
 
 fn general_protection_fault_handler_impl(frame: &InterruptStackFrame, error_code: u64) {
+    if from_user(frame) {
+        kill_user_process("general protection fault", frame.instruction_pointer.as_u64(), error_code);
+    }
     log::error!("GENERAL PROTECTION FAULT at RIP={:#x}, error={}", frame.instruction_pointer.as_u64(), error_code);
     panic!("General protection fault");
+}
+
+/// True when the exception interrupted ring 3.
+fn from_user(frame: &InterruptStackFrame) -> bool {
+    frame.code_segment.0 & 3 == 3
+}
+
+/// A fault in ring 3 is the process's fault, not the kernel's: report it as
+/// evidence and end the process with a signal-style code (128 + SIGSEGV).
+fn kill_user_process(what: &str, rip: u64, detail: u64) -> ! {
+    use core::fmt::Write;
+    let _ = writeln!(
+        crate::SerialPort,
+        "[kernel] pid={} killed: {} in ring 3 at rip={:#x} ({:#x})",
+        current_pid(), what, rip, detail
+    );
+    crate::syscall::end_current_process(128 + 11);
 }
 
 extern "x86-interrupt" fn page_fault_handler(frame: InterruptStackFrame, error_code: PageFaultErrorCode) {
@@ -169,14 +189,16 @@ fn page_fault_handler_impl(frame: &InterruptStackFrame, error_code: PageFaultErr
         error_code
     );
 
-    let pid = current_pid();
-    if pid != 0 {
-        if let Some(mut guard) = process_table().get_mut(pid) {
-            guard.get_mut().state = crate::process::ProcessState::Terminated;
-            guard.get_mut().exit_code = Some(-11); // SIGSEGV
-        }
+    if from_user(frame) {
+        kill_user_process("page fault", frame.instruction_pointer.as_u64(), addr.as_u64());
     }
-    schedule_next();
+    // Returning would re-execute the faulting kernel instruction forever.
+    panic!(
+        "kernel page fault at RIP={:#x}, addr={:#x}, error={:?}",
+        frame.instruction_pointer.as_u64(),
+        addr.as_u64(),
+        error_code
+    );
 }
 
 extern "x86-interrupt" fn x87_floating_point_handler(frame: InterruptStackFrame) {
@@ -308,7 +330,9 @@ pub fn init_idt() -> &'static InterruptDescriptorTable {
 
         // Exception handlers with error code
         unsafe {
-            idt.double_fault.set_handler_fn(double_fault_handler);
+            idt.double_fault
+                .set_handler_fn(double_fault_handler)
+                .set_stack_index(crate::gdt::DOUBLE_FAULT_IST_INDEX);
             idt.invalid_tss.set_handler_fn(invalid_tss_handler);
             idt.segment_not_present.set_handler_fn(segment_not_present_handler);
             idt.stack_segment_fault.set_handler_fn(stack_segment_fault_handler);
@@ -325,9 +349,13 @@ pub fn init_idt() -> &'static InterruptDescriptorTable {
         idt[0x24].set_handler_fn(mouse_handler);      // IRQ4 - Mouse (PS/2)
         idt[0x2E].set_handler_fn(ide_handler);        // IRQ14 - Primary IDE
 
-        // Syscall handler (vector 0x80 or via SYSCALL MSR)
-        let syscall_entry = idt[0x80].set_handler_fn(syscall_handler);
-        unsafe { syscall_entry.set_stack_index(0); } // Use IST0 for syscall
+        // int 0x80 system calls. DPL 3 so ring 3 may invoke it; no IST: the
+        // CPU switches to TSS.RSP0 on the privilege change.
+        unsafe {
+            idt[0x80]
+                .set_handler_addr(VirtAddr::new(crate::syscall::int80_entry as *const () as u64))
+                .set_privilege_level(x86_64::PrivilegeLevel::Ring3);
+        }
 
         // Spurious interrupt
         idt[0xFF].set_handler_fn(spurious_handler);
@@ -342,8 +370,18 @@ pub fn init_idt() -> &'static InterruptDescriptorTable {
 /// Initialize SYSCALL/SYSRET fast path
 pub fn init_syscall() {
     unsafe {
-        // STAR: SYSRET CS/SS (user mode) in bits 63:48, SYSCALL CS/SS (kernel) in bits 47:32
-        Star::write_raw(0x1B, 0x08);
+        // STAR: SYSRET base (user data = base+8, user code = base+16) and
+        // SYSCALL base (kernel code, kernel data = +8). `write` validates
+        // the layout against gdt.rs.
+        use x86_64::structures::gdt::SegmentSelector;
+        use crate::gdt::{KERNEL_CS, KERNEL_DS, USER_CS, USER_DS};
+        Star::write(
+            SegmentSelector(USER_CS),
+            SegmentSelector(USER_DS),
+            SegmentSelector(KERNEL_CS),
+            SegmentSelector(KERNEL_DS),
+        )
+        .expect("STAR selector layout");
 
         // LSTAR: syscall entry point (64-bit)
         LStar::write(VirtAddr::new(syscall_entry as u64));
@@ -399,14 +437,6 @@ let decision = scheduler.tick(&[]);
     if !decision.is_idle() && decision.selected_pid != current_pid() {
         context_switch(table, decision.selected_pid);
     }
-}
-
-/// Syscall handler (INT 0x80 legacy)
-extern "x86-interrupt" fn syscall_handler(_frame: InterruptStackFrame) {
-    // Legacy INT 0x80 syscall
-    // Args in: RAX=syscall num, RDI, RSI, RDX, R10, R8, R9
-    // Return in RAX
-    log::debug!("Syscall (int 0x80)");
 }
 
 /// SYSCALL entry point — Windows/msvc uses the COFF implementation in

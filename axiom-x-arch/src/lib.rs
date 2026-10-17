@@ -16,8 +16,10 @@ extern crate alloc;
 use alloc::borrow::ToOwned;
 use alloc::string::ToString;
 
+pub mod gdt;
 pub mod process;
 pub mod interrupts;
+pub mod syscall;
 
 pub use process::*;
 pub use interrupts::*;
@@ -57,6 +59,10 @@ pub fn init_arch() {
     // Initialize PIT timer (100 Hz = the scheduler's 10 ms slice). At 1000 Hz
     // an unoptimized tick outlasts the period and the IRQ livelocks the CPU.
     init_pit(100);
+
+    // Kernel GDT + TSS (user segments, RSP0, double-fault IST) before the IDT,
+    // whose gates reference the TSS's IST slots.
+    gdt::init_gdt();
 
     // Initialize IDT
     init_idt();
@@ -197,6 +203,26 @@ pub fn inb(port: u16) -> u8 {
     let value: u8;
     unsafe { asm!("in al, dx", in("dx") port, out("al") value) };
     value
+}
+
+/// COM1 data port (the boot path initialises the UART).
+const COM1: u16 = 0x3F8;
+
+/// Write one byte to COM1, waiting for the transmit holding register.
+pub fn serial_write_byte(b: u8) {
+    while inb(COM1 + 5) & 0x20 == 0 {}
+    outb(COM1, b);
+}
+
+/// Allocation-free `core::fmt::Write` sink on COM1, usable from interrupt
+/// and syscall context.
+pub struct SerialPort;
+
+impl core::fmt::Write for SerialPort {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        s.bytes().for_each(serial_write_byte);
+        Ok(())
+    }
 }
 
 /// Write 16-bit to I/O port
