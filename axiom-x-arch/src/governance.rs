@@ -21,12 +21,12 @@ use core::sync::atomic::Ordering;
 use spin::Mutex;
 
 use crate::syscall::{
-    SYS_AX_GET_EVIDENCE, SYS_AX_SPAWN_MODULE, SYS_CLOCK_GETTIME, SYS_EXIT, SYS_GETPID, SYS_NANOSLEEP,
-    SYS_SCHED_YIELD, SYS_WAIT4, SYS_WRITE,
+    SYS_AX_GET_EVIDENCE, SYS_AX_PROC_LIST, SYS_AX_SPAWN_MODULE, SYS_CLOCK_GETTIME, SYS_EXIT, SYS_GETPID,
+    SYS_NANOSLEEP, SYS_READ, SYS_SCHED_YIELD, SYS_WAIT4, SYS_WRITE,
 };
 
 /// Records kept in memory; the chain itself is unbounded.
-pub const LEDGER_CAPACITY: usize = 1024;
+pub const LEDGER_CAPACITY: usize = 4096;
 
 static LEDGER: Mutex<Ledger<LEDGER_CAPACITY>> = Mutex::new(Ledger::new());
 
@@ -36,6 +36,10 @@ pub fn required_right(nr: u64) -> Option<Rights> {
     match nr {
         // The console is a shared endpoint: writing to it is sending.
         SYS_WRITE => Some(Rights::SEND),
+        // Reading the console is receiving from it.
+        SYS_READ => Some(Rights::RECV),
+        // Listing processes observes system state, like reading evidence.
+        SYS_AX_PROC_LIST => Some(Rights::EVIDENCE),
         SYS_AX_SPAWN_MODULE => Some(Rights::SPAWN),
         SYS_AX_GET_EVIDENCE => Some(Rights::EVIDENCE),
         SYS_EXIT | SYS_GETPID | SYS_SCHED_YIELD | SYS_NANOSLEEP | SYS_WAIT4 | SYS_CLOCK_GETTIME => None,
@@ -516,6 +520,20 @@ pub fn persist_flush() -> Result<u64, &'static str> {
         .map_err(|_| fail("cannot clear journal"))?;
     PERSIST.lock().persisted = total;
     Ok(total - from)
+}
+
+/// Records appended but not yet on disk (0 when persistence is off). Save
+/// well before this nears `LEDGER_CAPACITY`, or records leave memory
+/// unsaved and persistence stops.
+pub fn unflushed() -> u64 {
+    let (enabled, persisted) = {
+        let p = PERSIST.lock();
+        (p.enabled, p.persisted)
+    };
+    if !enabled {
+        return 0;
+    }
+    ledger_summary().0.saturating_sub(persisted)
 }
 
 /// Record `seq` from memory, or from disk if it is persisted but no longer

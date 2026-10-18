@@ -564,6 +564,11 @@ pub fn init_serial() {
     outb(COM1 + 0, 0x0C); // Divisor low byte (115200 baud @ 18.432 MHz)
     outb(COM1 + 1, 0x00); // Divisor high byte
     outb(COM1 + 3, 0x03); // 8N1, disable DLAB
+    // Keep any byte already received (typed or piped in before boot): the
+    // FIFO reset below would discard it.
+    while inb(COM1 + 5) & 0x01 != 0 {
+        axiom_x_arch::console::push_input(inb(COM1));
+    }
     outb(COM1 + 2, 0xC7); // Enable FIFO, clear, 14-byte threshold
     outb(COM1 + 4, 0x0B); // IRQs enabled, RTS/DSR set
 }
@@ -572,6 +577,8 @@ pub fn init_serial() {
 pub fn serial_putc(c: u8) {
     while inb(COM1 + 5) & 0x20 == 0 {} // Wait for THR empty
     outb(COM1, c);
+    // Mirror to the VGA text screen (reached via the boot identity map).
+    axiom_x_arch::console::vga_putc(c);
 }
 
 /// Write string to serial
@@ -945,7 +952,13 @@ extern "C" fn init_process() -> ! {
     {
         user::attach_ledger_disk();
         user::install_hooks();
-        user::run_rounds();
+        if cmdline_flag("axiom.selftest=off") {
+            serial_puts("[kernel] self-tests skipped (axiom.selftest=off)\n");
+        } else {
+            user::run_rounds();
+        }
+        // Interactive shell on the console; only returns if there is none.
+        user::run_shell();
     }
 
     // TODO: Mount root filesystem, start userspace init
@@ -969,6 +982,11 @@ extern "C" fn init_process() -> ! {
             );
         }
     }
+}
+
+/// True when `flag` appears as a word on the kernel command line.
+fn cmdline_flag(flag: &str) -> bool {
+    boot_cmdline().split_whitespace().any(|w| w == flag)
 }
 
 /// Detect CPU cores (simplified)

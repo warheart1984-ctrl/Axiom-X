@@ -155,6 +155,8 @@ pub struct Process {
     /// Capability rights held (`axiom_x_capability::Rights` bits). Kernel
     /// threads hold all; a user process holds what its creator granted.
     pub rights: u64,
+    /// Short program name (for `AX_PROC_LIST` / ps), NUL-padded.
+    pub name: [u8; 16],
 
     // Memory management
     pub page_table_root: PhysFrame<Size4KiB>,
@@ -567,6 +569,7 @@ pub fn init_kernel_process(
         wake_tick: 0,
         waiting_for: 0,
         rights: u64::MAX,
+        name: *b"kernel-init\0\0\0\0\0",
         page_table_root,
         kernel_stack_top: stack_top,
         user_stack_top: None,
@@ -604,6 +607,7 @@ pub fn init_user_process(
         wake_tick: 0,
         waiting_for: 0,
         rights: 0,
+        name: [0; 16],
         page_table_root,
         kernel_stack_top,
         user_stack_top: Some(user_stack_top),

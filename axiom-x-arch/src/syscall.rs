@@ -18,6 +18,7 @@ use x86_64::structures::paging::{PageTable, PageTableFlags};
 use crate::process::{current_pid, ProcessState, SyscallRecord};
 use crate::sched::TrapFrame;
 
+pub const SYS_READ: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
 pub const SYS_SCHED_YIELD: u64 = 24;
 pub const SYS_NANOSLEEP: u64 = 35;
@@ -29,6 +30,14 @@ pub const SYS_CLOCK_GETTIME: u64 = 228;
 /// Distinct from the declared `AxSpawn` (511), whose `SpawnRequest` ABI
 /// (caller-chosen entry/stack) is not implemented.
 pub const SYS_AX_SPAWN_MODULE: u64 = 520;
+/// Axiom-X: copy process table entries (`PROC_ENTRY_BYTES` each) to a user
+/// buffer: pid, parent, state, rights, name. Needs `Rights::EVIDENCE`.
+pub const SYS_AX_PROC_LIST: u64 = 521;
+pub const PROC_ENTRY_BYTES: u64 = 48;
+
+/// Echo every syscall decision to the console (the ledger records them
+/// regardless). On for the boot self-tests; the shell turns it off.
+pub static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
 /// Axiom-X (declared in axiom-x-sys as `AxGetEvidence`): read ledger record
 /// `seq` into a user buffer; `seq = u64::MAX` returns the record count.
 pub const SYS_AX_GET_EVIDENCE: u64 = 501;
@@ -152,6 +161,22 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
 
     let result: i64 = match nr {
         SYS_WRITE => sys_write(a0, a1, a2),
+        SYS_READ => match sys_read(a0, a1, a2) {
+            Some(r) => r,
+            None => {
+                // Nothing to read: block until console input arrives, then
+                // re-execute the call (same restart scheme as wait4).
+                crate::governance::record_block(pid, nr, a0);
+                if let Some(mut g) = crate::interrupts::process_table().get_mut(pid) {
+                    let p = g.get_mut();
+                    p.state = ProcessState::Blocked;
+                    p.waiting_for = crate::sched::WAIT_CONSOLE;
+                }
+                frame.rip -= 2;
+                return switch_away(frame_rsp);
+            }
+        },
+        SYS_AX_PROC_LIST => sys_proc_list(a0, a1),
         SYS_EXIT => {
             log_syscall(pid, "exit", nr, a0, 0);
             mark_ended(a0 as i32);
@@ -374,6 +399,62 @@ fn idle_forever() -> ! {
     }
 }
 
+/// `read(0, buf, len)` from the console: copies what is queued (at least
+/// one byte). `None` means nothing is queued yet and the caller must block.
+fn sys_read(fd: u64, buf: u64, len: u64) -> Option<i64> {
+    if fd != 0 {
+        return Some(-EBADF);
+    }
+    let len = len.min(MAX_WRITE_LEN);
+    if len == 0 {
+        return Some(0);
+    }
+    if !user_range_accessible(buf, len, true) {
+        return Some(-EFAULT);
+    }
+    let mut tmp = [0u8; 256];
+    let want = (len as usize).min(tmp.len());
+    let n = crate::console::read_into(&mut tmp[..want]);
+    if n == 0 {
+        return None;
+    }
+    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf as *mut u8, n) };
+    Some(n as i64)
+}
+
+/// `AX_PROC_LIST(buf, max)`: up to `max` entries of `PROC_ENTRY_BYTES`:
+/// pid u32, parent u32 (0 = kernel), state u32, pad, rights u64, name[16],
+/// pad[8]. Returns the number written.
+fn sys_proc_list(buf: u64, max: u64) -> i64 {
+    let max = max.min(64);
+    if max == 0 {
+        return 0;
+    }
+    if !user_range_accessible(buf, max * PROC_ENTRY_BYTES, true) {
+        return -EFAULT;
+    }
+    let mut entries = [[0u8; PROC_ENTRY_BYTES as usize]; 64];
+    let n = crate::interrupts::process_table().with_locked(|ps| {
+        let mut n = 0;
+        for p in ps.iter().take(max as usize) {
+            let e = &mut entries[n];
+            e[0..4].copy_from_slice(&p.pid.to_le_bytes());
+            e[4..8].copy_from_slice(&p.parent_pid.unwrap_or(0).to_le_bytes());
+            e[8..12].copy_from_slice(&(p.state as u32).to_le_bytes());
+            e[16..24].copy_from_slice(&p.rights.to_le_bytes());
+            e[24..40].copy_from_slice(&p.name);
+            n += 1;
+        }
+        n
+    });
+    for (i, e) in entries[..n].iter().enumerate() {
+        unsafe {
+            core::ptr::copy_nonoverlapping(e.as_ptr(), (buf + i as u64 * PROC_ENTRY_BYTES) as *mut u8, e.len())
+        };
+    }
+    n as i64
+}
+
 fn sys_write(fd: u64, buf: u64, len: u64) -> i64 {
     if fd != 1 && fd != 2 {
         return -EBADF;
@@ -391,7 +472,9 @@ fn sys_write(fd: u64, buf: u64, len: u64) -> i64 {
 
 fn name_of(nr: u64) -> &'static str {
     match nr {
+        SYS_READ => "read",
         SYS_WRITE => "write",
+        SYS_AX_PROC_LIST => "ax_proc_list",
         SYS_EXIT => "exit",
         SYS_GETPID => "getpid",
         SYS_SCHED_YIELD => "sched_yield",
@@ -407,6 +490,9 @@ fn name_of(nr: u64) -> &'static str {
 /// One evidence line per decision, on the kernel serial console.
 fn log_syscall(pid: u32, name: &str, nr: u64, a0: u64, result: i64) {
     use core::fmt::Write;
+    if !TRACE.load(core::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     let _ = writeln!(
         crate::SerialPort,
         "[syscall] pid={} {}(nr={}, a0={:#x}) -> {}",

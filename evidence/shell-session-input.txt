@@ -1,0 +1,17 @@
+help
+echo hello from the Axiom-X shell
+date
+uptime
+rights
+ps
+run elf-hello
+run elf-crash
+run elf-noperm -send
+run elf-audit
+run elf-audit +evidence
+run no-such-program
+run elf-bad-wx
+run elf-hello +bogus
+ledger
+frobnicate
+exit

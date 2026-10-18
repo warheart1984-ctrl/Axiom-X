@@ -76,6 +76,21 @@ grub-mkrescue -o evidence/axiom-x-dbg.iso evidence/iso >/dev/null 2>&1
 LEDGER_DISK="${LEDGER_DISK:-evidence/ledger.img}"
 [ -f "$LEDGER_DISK" ] || truncate -s 4M "$LEDGER_DISK"
 
+# SHELL_INPUT=<file>: scripted session. The file is fed to COM1 (the
+# shell's console), output goes to evidence/serial-mb2.log, and a QEMU
+# monitor socket (/tmp/axiomx-mon.sock: Unix sockets cannot live on the
+# Windows drive under WSL) lets vm-keys.py press keys on the
+# PS/2 keyboard and screenshot the VGA screen. Runs for $SECS seconds.
+if [ -n "${SHELL_INPUT:-}" ]; then
+    rm -f /tmp/axiomx-mon.sock
+    timeout "$SECS" qemu-system-x86_64 -cdrom evidence/axiom-x-dbg.iso -boot d \
+        -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
+        -serial stdio -display none -no-reboot -m 256M \
+        -monitor unix:/tmp/axiomx-mon.sock,server,nowait \
+        < "$SHELL_INPUT" > evidence/serial-mb2.log 2>evidence/tmp/qemu-stderr.log || true
+    exit 0
+fi
+
 # LIVE=1: show the kernel's serial console on this terminal as it boots
 # (no interrupt trace, no log file). Runs until Ctrl-C: under `timeout`
 # QEMU either stops on SIGTTIN (it reads the terminal for -serial stdio)

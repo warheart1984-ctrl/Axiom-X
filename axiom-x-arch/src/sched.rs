@@ -97,11 +97,17 @@ pub fn schedule(frame_rsp: u64) -> u64 {
     let Some(mut procs) = process_table().try_lock_processes() else {
         return frame_rsp;
     };
-    // Wake sleepers whose deadline has passed.
+    // Wake sleepers whose deadline has passed, and console readers when
+    // input is waiting (interrupt handlers only queue bytes).
     let now = TICKS.load(Ordering::Relaxed);
+    let input = crate::console::has_input();
     for p in procs.iter_mut() {
         if p.state == ProcessState::Blocked && p.wake_tick != 0 && p.wake_tick <= now {
             p.wake_tick = 0;
+            p.state = ProcessState::Runnable;
+        }
+        if p.state == ProcessState::Blocked && p.waiting_for == WAIT_CONSOLE && input {
+            p.waiting_for = 0;
             p.state = ProcessState::Runnable;
         }
     }
@@ -181,11 +187,14 @@ fn set_saved_rsp(pid: u32, rsp: u64) {
 /// rights are written in the same critical section that sets `Runnable`, so
 /// no tick can schedule it before they hold (it would otherwise run with
 /// zero rights, or end before its parent is recorded).
-fn activate_new(pid: u32, rsp: u64, parent: Option<u32>, rights: u64) {
+fn activate_new(pid: u32, rsp: u64, parent: Option<u32>, rights: u64, name: &str) {
     let mut guard = process_table().get_mut(pid).expect("new process");
     let p = guard.get_mut();
     p.parent_pid = parent;
     p.rights = rights;
+    let n = name.len().min(p.name.len());
+    p.name = [0; 16];
+    p.name[..n].copy_from_slice(&name.as_bytes()[..n]);
     p.saved_rsp = rsp;
     p.state = ProcessState::Runnable;
 }
@@ -213,10 +222,11 @@ pub fn spawn_user_process(
     root: PhysFrame<Size4KiB>,
     parent: Option<u32>,
     rights: crate::governance::Rights,
+    name: &str,
 ) -> Result<u32, &'static str> {
     let pid = init_user_process(process_table(), entry, VirtAddr::new(user_rsp), kstack_top, root)?;
     let rsp = initial_frame(kstack_top, entry, USER_CS, user_rsp, USER_DS);
-    activate_new(pid, rsp, parent, rights.bits());
+    activate_new(pid, rsp, parent, rights.bits(), name);
     Ok(pid)
 }
 
@@ -232,6 +242,9 @@ pub fn start(pid: u32) -> ! {
     activate(pid, root, kstack);
     unsafe { resume_frame(rsp) }
 }
+
+/// `waiting_for` marker: blocked in `read(0)` until console input arrives.
+pub const WAIT_CONSOLE: i64 = -2;
 
 /// PIT period: the scheduler's time unit.
 pub const TICK_NS: u64 = 10_000_000;

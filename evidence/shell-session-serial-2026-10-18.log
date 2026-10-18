@@ -1,0 +1,101 @@
+YAXIOM-X BOOT
+Parsing multiboot2 info...
+  Kernel: 0x100000 - 0x27d2b0
+  Memory regions: 7
+Initializing kernel frame allocator...
+  Frame allocator will be initialized by kernel
+Initializing boot allocator...
+  Boot modules: 10
+Setting up page tables...
+  PML4 at 0xa2f000
+Initializing early heap...
+Initializing CPU features...
+Initializing architecture...
+Calibrating clock (RTC + TSC, 1-2 s)...
+  RTC: 2026-10-18 04:27:32 (no time zone)  TSC: 3704.164 MHz
+Initializing movie subsystem...
+Creating process table...
+  ProcessTable: 544792 bytes
+Initializing scheduler...
+Creating init process...
+  Init PID: 1 (kernel stack top 0xffff800008011000)
+Starting scheduler...
+PID 1 (init) running on its own stack; interrupts enabled
+[ledger] signing key provisioned; public key 5b82c607bffbf55da01a58b242584edb208cb412e030244ddfc7b7c579705f8a
+[ledger] boot 6: verified 5232 persisted records from genesis and the checkpoint signature; resuming chain at seq 5232 (head fc1a7e40174e1ebe...); signing new checkpoints; 14 checkpoints archived
+[kernel] self-tests skipped (axiom.selftest=off)
+
+Axiom-X shell (pid 2). Type 'help'.
+[kernel] loaded ELF 'elf-shell' as pid 2 (parent 0): 37440 bytes, 3 segments, 9 pages, PML4 0xb48000
+axiom> help
+commands:
+  help                  this list
+  echo <text>           print text
+  date                  wall clock (RTC-anchored, no time zone)
+  uptime                time since boot (TSC)
+  ps                    processes: pid, parent, state, rights, name
+  rights                this shell's rights
+  run <program> [+evidence] [-send]
+                        start a boot module and wait; it gets SEND by default,
+                        +evidence adds EVIDENCE, -send removes SEND
+  ledger                verify the newest evidence records' hash chain
+  exit                  leave (the kernel starts a new shell)
+axiom> echo hello from the Axiom-X shell
+hello from the Axiom-X shell
+axiom> date
+2026-10-18 04:27:36 (RTC time, no time zone)
+axiom> uptime
+up 0h 00m 04.587s
+axiom> rights
+pid 2: rights SRPDE (0x210580)  S=send R=recv P=spawn D=delegate E=evidence
+axiom> ps
+  PID PARENT STATE    RIGHTS NAME
+    1      0 ready    all    kernel-init
+    2      0 running  SRPDE  elf-shell
+axiom> run elf-hello
+[kernel] loaded ELF 'elf-hello' as pid 3 (parent 2): 16880 bytes, 3 segments, 5 pages, PML4 0xb6a000
+[elf-hello] pid 3: Rust ELF running in ring 3
+[elf-hello] .data initialized: true, .bss zeroed: true
+[elf-hello] back after sched_yield, exiting
+[pid 3 'elf-hello' exited with code 0]
+axiom> run elf-crash
+[kernel] loaded ELF 'elf-crash' as pid 4 (parent 2): 16800 bytes, 3 segments, 4 pages, PML4 0xb87000
+[elf-crash] pid 4 reading a kernel address
+[kernel] pid=4 killed: page fault in ring 3 at rip=0x800000119b (0xffff800000100000)
+[pid 4 'elf-crash' killed by signal 11]
+axiom> run elf-noperm -send
+[kernel] loaded ELF 'elf-noperm' as pid 5 (parent 2): 8520 bytes, 2 segments, 2 pages, PML4 0xb6f000
+[pid 5 'elf-noperm' exited with code 0]
+axiom> run elf-audit
+[kernel] loaded ELF 'elf-audit' as pid 6 (parent 2): 25040 bytes, 3 segments, 6 pages, PML4 0xb81000
+[audit] cannot read the ledger: -1 (EPERM)
+[pid 6 'elf-audit' exited with code 1]
+axiom> run elf-audit +evidence
+[kernel] loaded ELF 'elf-audit' as pid 7 (parent 2): 25040 bytes, 3 segments, 6 pages, PML4 0xb88000
+[audit] pid 7: verifying ledger records 5063..5463 (of 5463)
+[audit] chain intact: 400 records, head 685d727510d8a674... (denies 3, faults 1, creates 6, reaps 10)
+[audit] forged record 5263 detected: yes
+[audit] ledger audit: PASS
+[pid 7 'elf-audit' exited with code 0]
+axiom> run no-such-program
+run no-such-program: -2 (ENOENT)
+axiom> run elf-bad-wx
+[kernel] ELF 'elf-bad-wx' rejected: segment is both writable and executable (W^X)
+run elf-bad-wx: -8 (ENOEXEC)
+axiom> run elf-hello +bogus
+run: unknown flag '+bogus'
+axiom> ledger
+ledger: 6150 records; newest 200 verified; head 79973c2a9d686e81...
+axiom> frobnicate
+frobnicate: unknown command (try 'help')
+axiom> exit
+bye
+[kernel] shell exited; starting a new one
+[kernel] loaded ELF 'elf-shell' as pid 8 (parent 0): 37440 bytes, 3 segments, 9 pages, PML4 0xb69000
+
+Axiom-X shell (pid 8). Type 'help'.
+axiom> ps
+  PID PARENT STATE    RIGHTS NAME
+    1      0 ready    all    kernel-init
+    8      0 running  SRPDE  elf-shell
+axiom> 

@@ -24,6 +24,7 @@ pub mod sched;
 pub mod governance;
 pub mod ata;
 pub mod clock;
+pub mod console;
 
 pub use process::*;
 pub use interrupts::*;
@@ -78,10 +79,12 @@ pub fn init_arch() {
     // puts IRQ0 on vector 8, so an unremapped timer tick is a "double fault".
     remap_pic(0x20, 0x28);
 
-    // Unmask IRQ0 (timer) on master PIC, keep other IRQs masked.
-    // Interrupts stay disabled (IF=0): the timer handler needs the scheduler
-    // and process table, so the boot path executes `sti` once those exist.
-    outb(0x21, 0xFE);
+    // Unmask IRQ0 (timer), IRQ1 (PS/2 keyboard) and IRQ4 (COM1) on the
+    // master PIC, keep the rest masked. Interrupts stay disabled (IF=0):
+    // the timer handler needs the scheduler and process table, so the
+    // boot path enables them once those exist (via the first iretq).
+    console::enable_serial_rx();
+    outb(0x21, 0xEC);
     outb(0xA1, 0xFF);
     log::info!("x86_64 architecture initialized (interrupts still disabled)");
 }
@@ -216,6 +219,7 @@ const COM1: u16 = 0x3F8;
 pub fn serial_write_byte(b: u8) {
     while inb(COM1 + 5) & 0x20 == 0 {}
     outb(COM1, b);
+    console::vga_putc(b);
 }
 
 /// Allocation-free `core::fmt::Write` sink on COM1, usable from interrupt

@@ -16,12 +16,16 @@ pub use axiom_x_capability::Rights;
 pub use axiom_x_ledger as ledger;
 
 pub mod nr {
+    pub const READ: u64 = 0;
     pub const WRITE: u64 = 1;
     pub const SCHED_YIELD: u64 = 24;
     pub const NANOSLEEP: u64 = 35;
     pub const GETPID: u64 = 39;
     pub const EXIT: u64 = 60;
     pub const WAIT4: u64 = 61;
+    pub const CLOCK_GETTIME: u64 = 228;
+    /// Axiom-X: list processes (needs `Rights::EVIDENCE`).
+    pub const AX_PROC_LIST: u64 = 521;
     /// Axiom-X: start a boot module by name as a child process.
     pub const AX_SPAWN_MODULE: u64 = 520;
     /// Axiom-X `AxGetEvidence`: read a ledger record (needs `Rights::EVIDENCE`).
@@ -65,6 +69,74 @@ pub unsafe fn syscall3(nr: u64, a0: u64, a1: u64, a2: u64) -> i64 {
         options(nostack)
     );
     ret
+}
+
+/// `read(fd, buf)`: blocks until at least one byte is available (fd 0 =
+/// console; needs `Rights::RECV`). Returns bytes read or `-errno`.
+pub fn read(fd: u64, buf: &mut [u8]) -> i64 {
+    unsafe { syscall3(nr::READ, fd, buf.as_mut_ptr() as u64, buf.len() as u64) }
+}
+
+/// Clock ids for `clock_gettime`.
+pub const CLOCK_REALTIME: u64 = 0;
+pub const CLOCK_MONOTONIC: u64 = 1;
+
+/// Nanoseconds from `clock`, or `-errno`.
+pub fn clock_ns(clock: u64) -> Result<u64, i64> {
+    let mut ts = [0i64; 2];
+    let r = unsafe { syscall3(nr::CLOCK_GETTIME, clock, ts.as_mut_ptr() as u64, 0) };
+    if r < 0 { Err(r) } else { Ok(ts[0] as u64 * 1_000_000_000 + ts[1] as u64) }
+}
+
+/// One process as `AX_PROC_LIST` reports it.
+#[derive(Clone, Copy)]
+pub struct ProcInfo {
+    pub pid: u32,
+    pub parent: u32,
+    pub state: u32,
+    pub rights: u64,
+    pub name: [u8; 16],
+}
+
+impl ProcInfo {
+    pub fn name(&self) -> &str {
+        let n = self.name.iter().position(|&b| b == 0).unwrap_or(16);
+        core::str::from_utf8(&self.name[..n]).unwrap_or("?")
+    }
+
+    pub fn state_name(&self) -> &'static str {
+        match self.state {
+            0 => "new",
+            1 => "ready",
+            2 => "running",
+            3 => "blocked",
+            4 => "zombie",
+            _ => "?",
+        }
+    }
+}
+
+/// Fill `out` with the process table; returns how many entries, or `-errno`.
+pub fn proc_list(out: &mut [ProcInfo]) -> i64 {
+    const ENTRY: usize = 48;
+    let mut buf = [0u8; ENTRY * 32];
+    let max = out.len().min(32);
+    let r = unsafe { syscall3(nr::AX_PROC_LIST, buf.as_mut_ptr() as u64, max as u64, 0) };
+    if r < 0 {
+        return r;
+    }
+    for i in 0..r as usize {
+        let e = &buf[i * ENTRY..(i + 1) * ENTRY];
+        let u32_at = |o: usize| u32::from_le_bytes(e[o..o + 4].try_into().unwrap());
+        out[i] = ProcInfo {
+            pid: u32_at(0),
+            parent: u32_at(4),
+            state: u32_at(8),
+            rights: u64::from_le_bytes(e[16..24].try_into().unwrap()),
+            name: e[24..40].try_into().unwrap(),
+        };
+    }
+    r
 }
 
 pub fn write(fd: u64, buf: &[u8]) -> i64 {
@@ -150,6 +222,17 @@ impl fmt::Write for Stdout {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         if write(1, s.as_bytes()) < 0 { Err(fmt::Error) } else { Ok(()) }
     }
+}
+
+/// `print!` without a trailing newline (same buffering as `println!`).
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => {{
+        use core::fmt::Write as _;
+        let mut line = $crate::LineBuf::new();
+        let _ = write!(line, $($arg)*);
+        line.flush();
+    }};
 }
 
 /// Fixed-size line buffer so a formatted line reaches the console in one

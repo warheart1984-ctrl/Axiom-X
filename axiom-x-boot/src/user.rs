@@ -17,6 +17,7 @@
 
 use core::arch::global_asm;
 use core::ptr::addr_of;
+use core::sync::atomic::Ordering;
 
 use x86_64::structures::paging::PageTableFlags;
 
@@ -208,7 +209,7 @@ fn spawn_embedded(prog: &UserProgram) {
 
     let kstack = alloc_kernel_stack();
     let pid = axiom_x_arch::sched::spawn_user_process(
-        USER_CODE_VA, USER_STACK_VA + 4096, kstack, root, None, EMBEDDED_RIGHTS,
+        USER_CODE_VA, USER_STACK_VA + 4096, kstack, root, None, EMBEDDED_RIGHTS, prog.name,
     )
     .expect("create user process");
     kernel_grant(pid, EMBEDDED_RIGHTS);
@@ -250,7 +251,7 @@ fn spawn_elf(name: &str, bytes: &[u8], parent: Option<u32>, rights: Rights) -> R
         map_page_in(root, ELF_STACK_TOP - i * 4096, f, user_rw());
     }
     let kstack = alloc_kernel_stack();
-    let pid = axiom_x_arch::sched::spawn_user_process(image.entry, ELF_STACK_TOP, kstack, root, parent, rights)
+    let pid = axiom_x_arch::sched::spawn_user_process(image.entry, ELF_STACK_TOP, kstack, root, parent, rights, name)
         .map_err(|_| -ENOMEM)?;
     serial_print!(
         "[kernel] loaded ELF '{}' as pid {} (parent {}): {} bytes, {} segments, {} pages, PML4 {:#x}\n",
@@ -466,6 +467,9 @@ pub fn run_rounds() {
         let started = spawn_round();
         while !all_user_processes_ended() {
             unsafe { core::arch::asm!("hlt") };
+            if governance::unflushed() >= FLUSH_BACKLOG {
+                flush_ledger_quietly();
+            }
         }
         let (n, freed) = reap();
         let left = axiom_x_arch::interrupts::process_table().count();
@@ -490,9 +494,70 @@ pub fn run_rounds() {
     }
 }
 
+/// The interactive shell module and what it may do: talk on the console
+/// (SEND + RECV), start programs and pass rights on (SPAWN + DELEGATE),
+/// and observe processes and the ledger (EVIDENCE).
+const SHELL_MODULE: &str = "elf-shell";
+const SHELL_RIGHTS: Rights = Rights::new(
+    Rights::SEND.bits()
+        | Rights::RECV.bits()
+        | Rights::SPAWN.bits()
+        | Rights::DELEGATE.bits()
+        | Rights::EVIDENCE.bits(),
+);
+
+/// Run the shell on the console forever, restarting it when it exits (like
+/// getty), persisting the ledger every few seconds. Returns only if there
+/// is no shell module.
+pub fn run_shell() {
+    let Some(m) = crate::boot_modules().iter().find(|m| m.name() == SHELL_MODULE) else {
+        serial_print!("[kernel] no '{}' module: no interactive shell\n", SHELL_MODULE);
+        return;
+    };
+    // The ledger records every syscall regardless; stop echoing each one
+    // so the console stays readable (axiom.trace=on keeps the echo).
+    if !crate::boot_cmdline().split_whitespace().any(|w| w == "axiom.trace=on") {
+        axiom_x_arch::syscall::TRACE.store(false, Ordering::SeqCst);
+    }
+    loop {
+        let Ok(pid) = spawn_elf(SHELL_MODULE, m.bytes(), None, SHELL_RIGHTS) else {
+            serial_puts("[kernel] cannot start the shell\n");
+            return;
+        };
+        kernel_grant(pid, SHELL_RIGHTS);
+        let mut last_flush = axiom_x_arch::sched::TICKS.load(Ordering::Relaxed);
+        while !all_user_processes_ended() {
+            unsafe { core::arch::asm!("hlt") };
+            let now = axiom_x_arch::sched::TICKS.load(Ordering::Relaxed);
+            if now - last_flush >= 500 || governance::unflushed() >= FLUSH_BACKLOG {
+                flush_ledger_quietly();
+                last_flush = now;
+            }
+        }
+        reap();
+        flush_ledger_quietly();
+        serial_puts("[kernel] shell exited; starting a new one\n");
+    }
+}
+
+/// Save as soon as this many records are waiting (far below the 4096-record
+/// in-memory ring), not only on a timer: a burst such as an audit can
+/// append hundreds of records per second.
+const FLUSH_BACKLOG: u64 = 256;
+
+/// Persist the ledger without a console line per save (errors still shown).
+fn flush_ledger_quietly() {
+    if let Err(why) = governance::persist_flush() {
+        serial_print!("[ledger] persistence error: {}\n", why);
+    }
+}
+
 /// Process-end hook (runs with interrupts off, in the ending process's
 /// syscall or fault context); the scheduler picks what runs next.
 pub fn on_process_end(pid: u32, parent: Option<u32>, code: i32) {
+    if !axiom_x_arch::syscall::TRACE.load(Ordering::Relaxed) {
+        return; // the shell reports its children itself
+    }
     let who = parent.map_or(0, |p| p);
     if code >= 0 {
         serial_print!("[kernel] pid {} (parent {}) exited with code {}\n", pid, who, code);
