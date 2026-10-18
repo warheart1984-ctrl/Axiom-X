@@ -1,40 +1,68 @@
-//! Ring-3 bring-up: embedded user programs, their address-space mapping, and
-//! what runs when each one ends.
+//! Ring-3 programs: embedded user binaries started as concurrent processes.
 //!
-//! Two programs run in sequence as separate processes:
+//! Each program gets its own address space (private PML4 user slot, shared
+//! kernel half), its own guarded kernel stack, and is mapped at the *same*
+//! user virtual address, so they can only coexist if address spaces really
+//! are per-process. They all run at once under the preemptive scheduler:
 //!
 //! 1. `hello`: `write(1, "hello from ring 3\n")`, then `write(1, <kernel
-//!    pointer>, 8)`, which must return `-EFAULT`; reports the result and
-//!    `exit(0)` (exit 1 if the kernel accepted the pointer).
-//! 2. `probe`: loads from a kernel address directly. The supervisor-only
-//!    mapping must page-fault in ring 3, and the kernel must kill the process
-//!    (code 139) instead of panicking. Its `exit(2)` must never run.
+//!    pointer>, 8)`, which must return `-EFAULT`; reports it and `exit(0)`.
+//! 2. `probe`: loads from a kernel address directly; the supervisor-only
+//!    mapping must page-fault in ring 3 and the kernel kills it (code 139).
+//! 3. `spin-A`, 4. `spin-B`: busy loops that never yield; each prints a tick
+//!    5 times then exits. Interleaved A/B ticks can only come from timer
+//!    preemption, since neither ever blocks or yields.
 //!
-//! Both share the kernel PML4 (no per-process address spaces yet); user pages
-//! live at `USER_CODE_VA`/`USER_STACK_VA` in PML4 slot 1, away from the
-//! supervisor-only identity map in slot 0.
-//!
-//! Status: `partial` — ring-3 entry, `int 0x80`, pointer validation and
-//! fault isolation are exercised in QEMU; programs are embedded blobs, not ELF.
+//! Status: `partial` — exercised in QEMU; programs are embedded blobs, not ELF.
 
 use core::arch::global_asm;
 use core::ptr::addr_of;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
-use axiom_x_arch::process::{
-    context_switch, init_user_process, restore_context, set_current_pid, CpuContext, ProcessState,
-};
 use x86_64::structures::paging::PageTableFlags;
-use x86_64::VirtAddr;
 
-use crate::{alloc_boot_frame, map_4kib_page, serial_puts, IDLE_STACK_TOP, KERNEL_PML4};
+use crate::{alloc_boot_frame, alloc_kernel_stack, map_page_in, new_address_space, serial_puts};
 
-/// User code page (PML4 index 1: 512 GiB, outside the boot identity map).
+/// User code page (PML4 slot 1), identical in every process.
 const USER_CODE_VA: u64 = 0x0000_0080_0000_0000;
 /// User stack page, 1 MiB above the code; stack grows down from page end.
 const USER_STACK_VA: u64 = 0x0000_0080_0010_0000;
 
+/// Busy-loop iterations between spinner ticks (several 10 ms slices in QEMU).
+macro_rules! spin_program {
+    ($tag:literal) => {
+        concat!(
+            ".global user_spin_", $tag, "_start\n",
+            ".global user_spin_", $tag, "_end\n",
+            "user_spin_", $tag, "_start:\n",
+            "    mov r12d, 5\n",
+            "spin_", $tag, "_loop:\n",
+            "    mov ecx, 4000000\n",
+            "spin_", $tag, "_busy:\n",
+            "    dec ecx\n",
+            "    jnz spin_", $tag, "_busy\n",
+            "    mov eax, 1\n",
+            "    mov edi, 1\n",
+            "    lea rsi, [rip + spin_", $tag, "_msg]\n",
+            "    lea rdx, [rip + spin_", $tag, "_msg_end]\n",
+            "    sub rdx, rsi\n",
+            "    int 0x80\n",
+            "    dec r12d\n",
+            "    jnz spin_", $tag, "_loop\n",
+            "    mov eax, 60\n",
+            "    xor edi, edi\n",
+            "    int 0x80\n",
+            "spin_", $tag, "_hang:\n",
+            "    jmp spin_", $tag, "_hang\n",
+            "spin_", $tag, "_msg: .ascii \"[user ", $tag, "] tick\\n\"\n",
+            "spin_", $tag, "_msg_end:\n",
+            "user_spin_", $tag, "_end:\n",
+        )
+    };
+}
+
 // Position-independent programs: data is addressed RIP-relatively, so the
-// bytes can be copied anywhere.
+// bytes can be copied to any page.
 global_asm!(
     ".section .rodata.user_programs, \"a\"",
     ".global user_hello_start",
@@ -88,6 +116,8 @@ global_asm!(
     "up_hang:",
     "    jmp up_hang",
     "user_probe_end:",
+    spin_program!("A"),
+    spin_program!("B"),
 );
 
 extern "C" {
@@ -95,6 +125,10 @@ extern "C" {
     static user_hello_end: u8;
     static user_probe_start: u8;
     static user_probe_end: u8;
+    static user_spin_A_start: u8;
+    static user_spin_A_end: u8;
+    static user_spin_B_start: u8;
+    static user_spin_B_end: u8;
 }
 
 struct UserProgram {
@@ -103,114 +137,71 @@ struct UserProgram {
     end: *const u8,
 }
 
-fn programs() -> [UserProgram; 2] {
+fn programs() -> [UserProgram; 4] {
     unsafe {
         [
             UserProgram { name: "hello", start: addr_of!(user_hello_start), end: addr_of!(user_hello_end) },
             UserProgram { name: "probe", start: addr_of!(user_probe_start), end: addr_of!(user_probe_end) },
+            UserProgram { name: "spin-A", start: addr_of!(user_spin_A_start), end: addr_of!(user_spin_A_end) },
+            UserProgram { name: "spin-B", start: addr_of!(user_spin_B_start), end: addr_of!(user_spin_B_end) },
         ]
     }
 }
 
-/// Index of the next program to start (single CPU, only touched with the
-/// current process ending or from init, so no lock is needed).
-static mut NEXT_PROGRAM: usize = 0;
+/// User processes that have not ended yet.
+static LIVE: AtomicUsize = AtomicUsize::new(0);
 
-/// Physical frames backing the user pages, allocated once and reused.
-static mut USER_FRAMES: Option<(u64, u64)> = None;
-
-/// Map the user code + stack pages (once) and return their physical frames.
-unsafe fn user_frames() -> (u64, u64) {
-    if let Some(f) = USER_FRAMES {
-        return f;
-    }
-    let pml4 = KERNEL_PML4.expect("PML4 not initialized").start_address().as_u64()
-        as *mut x86_64::structures::paging::PageTable;
-    let code = alloc_boot_frame().expect("frame for user code").start_address().as_u64();
-    let stack = alloc_boot_frame().expect("frame for user stack").start_address().as_u64();
-    // Code: user, read + execute (not writable). Stack: user, RW, no-exec.
-    map_4kib_page(pml4, USER_CODE_VA, code, PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE);
-    map_4kib_page(
-        pml4,
-        USER_STACK_VA,
-        stack,
-        PageTableFlags::PRESENT
-            | PageTableFlags::WRITABLE
-            | PageTableFlags::USER_ACCESSIBLE
-            | PageTableFlags::NO_EXECUTE,
-    );
-    USER_FRAMES = Some((code, stack));
-    (code, stack)
-}
-
-/// Load the next program into the user pages and enter it in ring 3.
-/// Returns only if every program has already run.
-pub fn run_next_program() {
-    let table = axiom_x_arch::interrupts::process_table();
+/// Create every program as its own process; the scheduler starts them.
+pub fn spawn_all() {
     let progs = programs();
-    let idx = unsafe { NEXT_PROGRAM };
-    let Some(prog) = progs.get(idx) else { return };
-    unsafe { NEXT_PROGRAM = idx + 1 };
+    // Count them all before the first can run (and end) under preemption.
+    LIVE.store(progs.len(), Ordering::SeqCst);
+    for prog in progs {
+        let len = prog.end as usize - prog.start as usize;
+        assert!(len <= 4096, "user program larger than one page");
 
-    let len = prog.end as usize - prog.start as usize;
-    assert!(len <= 4096, "user program larger than one page");
-    unsafe {
-        let (code, stack) = user_frames();
-        // Frames are reached through the identity map; code is not
-        // user-writable, so the kernel writes it here.
-        core::ptr::write_bytes(code as *mut u8, 0xCC, 4096); // int3 filler
-        core::ptr::copy_nonoverlapping(prog.start, code as *mut u8, len);
-        core::ptr::write_bytes(stack as *mut u8, 0, 4096);
-    }
-
-    let pml4 = unsafe { KERNEL_PML4.expect("PML4 not initialized") };
-    let pid = init_user_process(
-        table,
-        USER_CODE_VA,
-        VirtAddr::new(USER_STACK_VA + 4096),
-        axiom_x_arch::gdt::ring0_stack_top(),
-        pml4,
-    )
-    .expect("create user process");
-    serial_print!(
-        "[kernel] starting user program '{}' as pid {} ({} bytes at {:#x}, ring 3)\n",
-        prog.name, pid, len, USER_CODE_VA
-    );
-    context_switch(table, pid);
-}
-
-/// Process-end hook: report, then start the next program or go idle.
-pub fn on_process_end(pid: u32, code: i32) -> ! {
-    serial_print!("[kernel] pid {} ended with code {}\n", pid, code);
-    run_next_program();
-
-    serial_puts("[kernel] all user programs finished; idling\n");
-    let ctx = CpuContext::new_kernel(
-        post_user_idle as *const () as u64,
-        IDLE_STACK_TOP,
-        unsafe { KERNEL_PML4.expect("PML4").start_address().as_u64() },
-    );
-    set_current_pid(0);
-    unsafe { restore_context(&ctx) }
-}
-
-/// Mark init as no longer runnable before handing the CPU to user programs:
-/// init's context is never saved, so it must not be scheduled again.
-pub fn park_init(init_pid: u32) {
-    if let Some(mut guard) = axiom_x_arch::interrupts::process_table().get_mut(init_pid) {
-        guard.get_mut().state = ProcessState::Blocked;
-    }
-}
-
-/// Kernel idle thread after the user programs: proves timer interrupts and
-/// the kernel keep running once ring 3 is done.
-extern "C" fn post_user_idle() -> ! {
-    let mut wakes: u64 = 0;
-    loop {
-        unsafe { core::arch::asm!("hlt") };
-        wakes += 1;
-        if wakes % 100 == 0 {
-            serial_print!("  idle heartbeat: {} timer wakes\n", wakes);
+        let root = new_address_space();
+        let code = unsafe { alloc_boot_frame() }.expect("frame for user code").start_address().as_u64();
+        let stack = unsafe { alloc_boot_frame() }.expect("frame for user stack").start_address().as_u64();
+        unsafe {
+            // Frames are written through the identity map: the code page is
+            // not user-writable, so the kernel fills it before mapping.
+            core::ptr::write_bytes(code as *mut u8, 0xCC, 4096); // int3 filler
+            core::ptr::copy_nonoverlapping(prog.start, code as *mut u8, len);
+            core::ptr::write_bytes(stack as *mut u8, 0, 4096);
         }
+        // Code: user, read + execute (not writable). Stack: user, RW, no-exec.
+        map_page_in(root, USER_CODE_VA, code, PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE);
+        map_page_in(
+            root,
+            USER_STACK_VA,
+            stack,
+            PageTableFlags::PRESENT
+                | PageTableFlags::WRITABLE
+                | PageTableFlags::USER_ACCESSIBLE
+                | PageTableFlags::NO_EXECUTE,
+        );
+
+        let kstack = alloc_kernel_stack();
+        let pid = axiom_x_arch::sched::spawn_user_process(USER_CODE_VA, USER_STACK_VA + 4096, kstack, root)
+            .expect("create user process");
+        serial_print!(
+            "[kernel] spawned '{}' as pid {}: {} bytes at {:#x}, PML4 {:#x}, kstack top {:#x}\n",
+            prog.name,
+            pid,
+            len,
+            USER_CODE_VA,
+            root.start_address().as_u64(),
+            kstack.as_u64()
+        );
+    }
+}
+
+/// Process-end hook (runs with interrupts off, in the ending process's
+/// syscall or fault context); the scheduler picks what runs next.
+pub fn on_process_end(pid: u32, code: i32) {
+    serial_print!("[kernel] pid {} ended with code {}\n", pid, code);
+    if LIVE.fetch_sub(1, Ordering::SeqCst) == 1 {
+        serial_puts("[kernel] all user programs finished\n");
     }
 }

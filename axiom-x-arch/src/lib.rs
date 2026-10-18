@@ -20,6 +20,7 @@ pub mod gdt;
 pub mod process;
 pub mod interrupts;
 pub mod syscall;
+pub mod sched;
 
 pub use process::*;
 pub use interrupts::*;

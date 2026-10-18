@@ -11,12 +11,12 @@
 //!
 //! Status: `partial` — exercised by the ring-3 programs at boot in QEMU.
 
-use core::arch::naked_asm;
 use spin::Once;
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::{PageTable, PageTableFlags};
 
 use crate::process::{current_pid, ProcessState, SyscallRecord};
+use crate::sched::TrapFrame;
 
 pub const SYS_WRITE: u64 = 1;
 pub const SYS_EXIT: u64 = 60;
@@ -30,21 +30,9 @@ pub const USER_SPACE_END: u64 = 0x0000_8000_0000_0000;
 /// Largest single `write`; keeps one syscall from monopolising the CPU.
 pub const MAX_WRITE_LEN: u64 = 4096;
 
-/// Registers saved by `int80_entry`, lowest address first, followed by the
-/// interrupt frame the CPU pushed. Order must match the pushes below.
-#[repr(C)]
-pub struct SyscallFrame {
-    pub r15: u64, pub r14: u64, pub r13: u64, pub r12: u64,
-    pub r11: u64, pub r10: u64, pub r9: u64, pub r8: u64,
-    pub rbp: u64, pub rdi: u64, pub rsi: u64, pub rdx: u64,
-    pub rcx: u64, pub rbx: u64, pub rax: u64,
-    // Pushed by the CPU on the ring 3 -> 0 transition.
-    pub rip: u64, pub cs: u64, pub rflags: u64, pub rsp: u64, pub ss: u64,
-}
-
-/// Called when a user process ends, normally (`exit`) or because the kernel
-/// killed it (fault in ring 3). Never returns: it decides what runs next.
-pub type ProcessEndHook = fn(pid: u32, code: i32) -> !;
+/// Notified when a user process ends, normally (`exit`) or because the
+/// kernel killed it (fault in ring 3). The scheduler then picks what runs.
+pub type ProcessEndHook = fn(pid: u32, code: i32);
 
 static PROCESS_END_HOOK: Once<ProcessEndHook> = Once::new();
 
@@ -52,68 +40,31 @@ pub fn set_process_end_hook(hook: ProcessEndHook) {
     PROCESS_END_HOOK.call_once(|| hook);
 }
 
-/// Mark the current process terminated and hand control to the end hook.
-pub fn end_current_process(code: i32) -> ! {
+/// Mark the current process terminated and notify the end hook. The caller
+/// must then switch away (the thread must never be resumed).
+pub fn mark_ended(code: i32) {
     let pid = current_pid();
     if let Some(mut guard) = crate::interrupts::process_table().get_mut(pid) {
         let proc = guard.get_mut();
         proc.state = ProcessState::Terminated;
         proc.exit_code = Some(code);
     }
-    match PROCESS_END_HOOK.get() {
-        Some(hook) => hook(pid, code),
-        None => loop {
-            unsafe { core::arch::asm!("cli; hlt") };
-        },
+    if let Some(hook) = PROCESS_END_HOOK.get() {
+        hook(pid, code);
     }
 }
 
 /// IDT entry for vector 0x80. The gate must have DPL 3 so ring 3 may use it.
+/// Same entry/exit path as the timer, so `exit` can switch threads.
 #[unsafe(naked)]
 pub unsafe extern "C" fn int80_entry() -> ! {
-    naked_asm!(
-        // CPU pushed SS, RSP, RFLAGS, CS, RIP (40 bytes) onto the 16-byte
-        // aligned RSP0; 15 pushes (120 bytes) bring RSP back to 16-byte
-        // alignment for the call.
-        "push rax",
-        "push rbx",
-        "push rcx",
-        "push rdx",
-        "push rsi",
-        "push rdi",
-        "push rbp",
-        "push r8",
-        "push r9",
-        "push r10",
-        "push r11",
-        "push r12",
-        "push r13",
-        "push r14",
-        "push r15",
-        "cld",
-        "mov rdi, rsp",
-        "call {dispatch}",
-        "pop r15",
-        "pop r14",
-        "pop r13",
-        "pop r12",
-        "pop r11",
-        "pop r10",
-        "pop r9",
-        "pop r8",
-        "pop rbp",
-        "pop rdi",
-        "pop rsi",
-        "pop rdx",
-        "pop rcx",
-        "pop rbx",
-        "pop rax",
-        "iretq",
-        dispatch = sym syscall_dispatch,
-    );
+    crate::sched::trap_entry!(syscall_dispatch);
 }
 
-extern "C" fn syscall_dispatch(frame: &mut SyscallFrame) {
+/// Returns the RSP of the frame to resume: this one, or another thread's
+/// after `exit`.
+extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
+    let frame = unsafe { &mut *(frame_rsp as *mut TrapFrame) };
     let (nr, a0, a1, a2) = (frame.rax, frame.rdi, frame.rsi, frame.rdx);
     let pid = current_pid();
 
@@ -121,7 +72,11 @@ extern "C" fn syscall_dispatch(frame: &mut SyscallFrame) {
         SYS_WRITE => sys_write(a0, a1, a2),
         SYS_EXIT => {
             log_syscall(pid, "exit", nr, a0, 0);
-            end_current_process(a0 as i32);
+            mark_ended(a0 as i32);
+            return match crate::sched::schedule(frame_rsp) {
+                0 => idle_forever(),
+                rsp => rsp,
+            };
         }
         _ => -ENOSYS,
     };
@@ -136,6 +91,14 @@ extern "C" fn syscall_dispatch(frame: &mut SyscallFrame) {
     }
     log_syscall(pid, name_of(nr), nr, a0, result);
     frame.rax = result as u64;
+    frame_rsp
+}
+
+/// No thread is runnable: nothing left for the kernel to do.
+fn idle_forever() -> ! {
+    loop {
+        unsafe { core::arch::asm!("cli; hlt") };
+    }
 }
 
 fn sys_write(fd: u64, buf: u64, len: u64) -> i64 {

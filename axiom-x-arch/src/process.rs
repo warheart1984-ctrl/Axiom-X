@@ -144,6 +144,10 @@ pub struct Process {
     pub time_slice_ns: u64,
     pub affinity: Option<usize>,
 
+    /// Kernel RSP pointing at this thread's saved `TrapFrame` while it is
+    /// not running (see `sched`).
+    pub saved_rsp: u64,
+
     // Memory management
     pub page_table_root: PhysFrame<Size4KiB>,
     pub kernel_stack_top: VirtAddr,
@@ -255,6 +259,13 @@ impl ProcessTable {
             return None;
         }
         Some(ProcessGuard { processes, index })
+    }
+
+    /// Lock the process slice without spinning. Interrupt handlers use this:
+    /// if the interrupted code holds the lock, they must back off rather
+    /// than deadlock.
+    pub fn try_lock_processes(&self) -> Option<spin::MutexGuard<'_, Vec<Process, MAX_PROCESSES>>> {
+        self.processes.try_lock()
     }
 
     /// Get process count
@@ -499,6 +510,7 @@ pub fn init_kernel_process(
         profile: SchedProfile::Batch,
         time_slice_ns: 10_000_000,
         affinity: Some(0),
+        saved_rsp: 0,
         page_table_root,
         kernel_stack_top: stack_top,
         user_stack_top: None,
@@ -532,6 +544,7 @@ pub fn init_user_process(
         profile: SchedProfile::Interactive,
         time_slice_ns: 5_000_000,
         affinity: Some(0),
+        saved_rsp: 0,
         page_table_root,
         kernel_stack_top,
         user_stack_top: Some(user_stack_top),

@@ -17,7 +17,7 @@
 //! Status: `partial` — loaded at boot and exercised by ring-3 entry/exit in
 //! QEMU; single CPU only (one TSS, one RSP0 stack).
 
-use core::ptr::addr_of;
+use core::ptr::{addr_of, addr_of_mut};
 use spin::Once;
 use x86_64::instructions::segmentation::{Segment, CS, DS, ES, SS};
 use x86_64::instructions::tables::load_tss;
@@ -48,7 +48,9 @@ struct Stack<const N: usize>([u8; N]);
 static mut RING0_STACK: Stack<RING0_STACK_SIZE> = Stack([0; RING0_STACK_SIZE]);
 static mut DOUBLE_FAULT_STACK: Stack<DOUBLE_FAULT_STACK_SIZE> = Stack([0; DOUBLE_FAULT_STACK_SIZE]);
 
-static TSS: Once<TaskStateSegment> = Once::new();
+/// Mutable because RSP0 changes on every switch to a thread with its own
+/// kernel stack; the CPU reads it from memory on each ring 3 -> 0 entry.
+static mut TSS: TaskStateSegment = TaskStateSegment::new();
 static GDT: Once<GlobalDescriptorTable> = Once::new();
 
 fn stack_top<const N: usize>(stack: *const Stack<N>) -> VirtAddr {
@@ -64,13 +66,12 @@ pub fn ring0_stack_top() -> VirtAddr {
 ///
 /// Must run before the IDT is used from ring 3 and before `init_syscall`.
 pub fn init_gdt() {
-    let tss = TSS.call_once(|| {
-        let mut tss = TaskStateSegment::new();
-        tss.privilege_stack_table[0] = ring0_stack_top();
-        tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] =
+    unsafe {
+        let tss = addr_of_mut!(TSS);
+        (*tss).privilege_stack_table[0] = ring0_stack_top();
+        (*tss).interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] =
             stack_top(addr_of!(DOUBLE_FAULT_STACK));
-        tss
-    });
+    }
 
     let gdt = GDT.call_once(|| {
         let mut gdt = GlobalDescriptorTable::new();
@@ -79,7 +80,8 @@ pub fn init_gdt() {
             gdt.append(Descriptor::kernel_data_segment()),
             gdt.append(Descriptor::user_data_segment()),
             gdt.append(Descriptor::user_code_segment()),
-            gdt.append(Descriptor::tss_segment(tss)),
+            // SAFETY: TSS is a static that lives for the whole kernel run.
+            gdt.append(unsafe { Descriptor::tss_segment_unchecked(addr_of!(TSS)) }),
         ];
         let expected = [KERNEL_CS, KERNEL_DS, USER_DS, USER_CS, TSS_SEL];
         for (sel, want) in selectors.iter().zip(expected) {
@@ -96,4 +98,10 @@ pub fn init_gdt() {
         ES::set_reg(SegmentSelector(KERNEL_DS));
         load_tss(SegmentSelector(TSS_SEL));
     }
+}
+
+/// Point TSS.RSP0 at `top`: the kernel stack the CPU switches to when the
+/// next interrupt or syscall arrives from ring 3. Call with interrupts off.
+pub fn set_kernel_stack(top: VirtAddr) {
+    unsafe { (*addr_of_mut!(TSS)).privilege_stack_table[0] = top };
 }

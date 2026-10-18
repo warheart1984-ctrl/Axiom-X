@@ -28,16 +28,20 @@ use x86_64::{
 };
 use axiom_x_arch::inb;
 use axiom_x_arch::outb;
-use axiom_x_arch::process::{ProcessTable, CpuContext, init_kernel_process};
+use axiom_x_arch::process::ProcessTable;
 use axiom_x_arch::interrupts::{init_scheduler, set_process_table};
 use axiom_x_math::memory_algebra::{FrameAllocator as MathFrameAllocator, RegionType, RegionFlags};
 use alloc::boxed::Box;
 
 /// Formatted serial output that never allocates (safe before the heap exists).
+/// Written with interrupts off so a preempted thread cannot interleave its
+/// half-written line with another thread's output.
 macro_rules! serial_print {
     ($($arg:tt)*) => {{
         use core::fmt::Write as _;
-        let _ = write!($crate::SerialWriter, $($arg)*);
+        x86_64::instructions::interrupts::without_interrupts(|| {
+            let _ = write!($crate::SerialWriter, $($arg)*);
+        });
     }};
 }
 
@@ -111,14 +115,15 @@ static mut KERNEL_PML4: Option<PhysFrame<Size4KiB>> = None;
 /// Virtual to physical offset (higher half mapping)
 const VIRT_PHYS_OFFSET: u64 = 0xFFFF_8000_0000_0000;
 
-/// Kernel stacks for the boot-created threads: idle, then init (PID 1).
-/// No guard pages yet: an overflow runs into the neighbour or unmapped memory.
-const KERNEL_STACKS_BASE: u64 = 0xFFFF_8000_0020_0000;
-/// 256 KiB each: IRQs run on the interrupted thread's stack, and the
-/// unoptimized scheduler tick alone needs well over 16 KiB.
-const BOOT_KSTACK_SIZE: u64 = 256 * 1024;
-const IDLE_STACK_TOP: u64 = KERNEL_STACKS_BASE + BOOT_KSTACK_SIZE;
-const INIT_STACK_TOP: u64 = KERNEL_STACKS_BASE + 2 * BOOT_KSTACK_SIZE;
+/// Region for per-thread kernel stacks (PML4 slot 256, whose lower-level
+/// tables every address space shares, so stacks mapped later are visible
+/// everywhere). Each slot is an unmapped guard page followed by the stack.
+const KERNEL_STACK_REGION: u64 = 0xFFFF_8000_0800_0000;
+const KERNEL_STACK_REGION_END: u64 = 0xFFFF_8000_1000_0000;
+/// 64 KiB per thread: the trap-frame scheduler and syscall paths are small;
+/// overflow hits the guard page and faults instead of corrupting memory.
+pub const KERNEL_STACK_SIZE: u64 = 64 * 1024;
+static mut NEXT_KERNEL_STACK: u64 = KERNEL_STACK_REGION;
 
 /// Identity map the first 1 GiB
 const IDENTITY_MAP_LIMIT: u64 = 1 << 30; // 1 GiB
@@ -159,15 +164,6 @@ pub unsafe fn init_early_page_tables(
         }
     }
 
-    // Map kernel stacks (idle + init) and heap.
-    // NOTE: must stay above the kernel image mapping (ends below VIRT+0x200000).
-    let kernel_stack_start = KERNEL_STACKS_BASE;
-    for i in 0..(2 * BOOT_KSTACK_SIZE / 4096) {
-        let phys = alloc_boot_frame().expect("out of memory for kernel stack");
-        let virt = kernel_stack_start + i * 4096;
-        map_4kib_page(pml4, virt, phys.start_address().as_u64(),
-            PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE);
-    }
 
     // NO_EXECUTE (bit 63) is a reserved bit unless EFER.NXE is set; the
     // trampoline only sets EFER.LME, so enable NXE before using these tables.
@@ -230,6 +226,47 @@ unsafe fn get_or_create_table(table: *mut PageTable, index: u64, user: bool) -> 
     }
     let phys = entry.addr().as_u64();
     phys as *mut PageTable
+}
+
+/// Allocate and map a kernel stack below an unmapped guard page; returns
+/// its top. Stacks are never freed (bump allocation, like frames).
+pub fn alloc_kernel_stack() -> VirtAddr {
+    unsafe {
+        let guard = NEXT_KERNEL_STACK;
+        let base = guard + 4096;
+        let top = base + KERNEL_STACK_SIZE;
+        assert!(top <= KERNEL_STACK_REGION_END, "kernel stack region exhausted");
+        NEXT_KERNEL_STACK = top;
+        let pml4 = KERNEL_PML4.expect("PML4 not initialized").start_address().as_u64() as *mut PageTable;
+        for va in (base..top).step_by(4096) {
+            let phys = alloc_boot_frame().expect("out of memory for kernel stack");
+            ptr::write_bytes(phys.start_address().as_u64() as *mut u8, 0, 4096);
+            map_4kib_page(pml4, va, phys.start_address().as_u64(),
+                PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE);
+        }
+        VirtAddr::new(top)
+    }
+}
+
+/// PML4 slot reserved for per-process user mappings.
+pub const USER_PML4_SLOT: usize = 1;
+
+/// New address space: shares every kernel PML4 entry (the supervisor-only
+/// identity map and the higher half) and gets a private, empty user slot.
+pub fn new_address_space() -> PhysFrame<Size4KiB> {
+    unsafe {
+        let frame = alloc_boot_frame().expect("out of memory for PML4");
+        let new = frame.start_address().as_u64() as *mut PageTable;
+        let kernel = KERNEL_PML4.expect("PML4 not initialized").start_address().as_u64() as *const PageTable;
+        ptr::copy_nonoverlapping(kernel, new, 1);
+        (&mut *new)[USER_PML4_SLOT].set_unused();
+        frame
+    }
+}
+
+/// Map one 4 KiB page into the address space rooted at `root`.
+pub fn map_page_in(root: PhysFrame<Size4KiB>, virt: u64, phys: u64, flags: PageTableFlags) {
+    unsafe { map_4kib_page(root.start_address().as_u64() as *mut PageTable, virt, phys, flags) }
 }
 
 /// Boot-time frame allocator (bump allocator from available memory)
@@ -375,9 +412,12 @@ pub fn serial_putc(c: u8) {
 
 /// Write string to serial
 pub fn serial_puts(s: &str) {
-    for c in s.bytes() {
-        serial_putc(c);
-    }
+    // Atomic per call under preemption (see `serial_print!`).
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        for c in s.bytes() {
+            serial_putc(c);
+        }
+    });
 }
 
 // ============================================================================
@@ -701,38 +741,17 @@ fn ax_kernel_entry_continue(boot_info: BootInfo) -> ! {
     init_scheduler(num_cores, 10_000_000); // 10ms time slice
     set_process_table(process_table);
 
-    // 7. Create idle process
-    serial_puts("Creating idle process...\n");
-    let _idle_ctx = CpuContext::new_kernel(
-        idle_loop as *const () as u64,
-        IDLE_STACK_TOP,
-        pml4_frame.start_address().as_u64(),
-    );
-    // Note: Process creation needs proper implementation
-
-    // 8. Create init process (PID 1)
+    // 7. Create init process (PID 1): a kernel thread on its own guarded stack
     serial_puts("Creating init process...\n");
-    let init_pid = init_kernel_process(
-        process_table,
-        init_process as *const () as u64,
-        VirtAddr::new(INIT_STACK_TOP),
-        pml4_frame,
-    ).expect("Failed to create init process");
-    serial_print!("  Init PID: {}\n", init_pid);
+    let init_stack = alloc_kernel_stack();
+    let init_pid = axiom_x_arch::sched::spawn_kernel_thread(init_process, init_stack, pml4_frame)
+        .expect("Failed to create init process");
+    serial_print!("  Init PID: {} (kernel stack top {:#x})\n", init_pid, init_stack.as_u64());
 
-    // 9. Start scheduler (this never returns)
-    // No `sti` here: an IRQ taken between `sti` and the switch would run the
-    // scheduler mid-handoff. The init context's RFLAGS has IF=1, so
-    // interrupts are enabled atomically by the `iretq` into PID 1.
+    // 8. Start scheduling (never returns). No `sti` here: init's initial
+    // frame has IF=1, so interrupts come on atomically with the `iretq`.
     serial_puts("Starting scheduler...\n");
-    axiom_x_arch::process::context_switch(process_table, init_pid);
-}
-
-/// Idle process loop
-extern "C" fn idle_loop() -> ! {
-    loop {
-        unsafe { asm!("hlt") };
-    }
+    axiom_x_arch::sched::start(init_pid);
 }
 
 /// Init process (PID 1)
@@ -740,13 +759,12 @@ extern "C" fn init_process() -> ! {
     log::info!("Init process started");
     serial_puts("PID 1 (init) running on its own stack; interrupts enabled\n");
 
-    // Hand the CPU to the ring-3 programs; init is parked (its context is
-    // never saved) and the process-end hook takes over from there.
+    // Start the ring-3 programs as concurrent processes, each in its own
+    // address space. init stays runnable and is preempted like they are.
     #[cfg(feature = "freestanding")]
     {
         axiom_x_arch::syscall::set_process_end_hook(user::on_process_end);
-        user::park_init(axiom_x_arch::process::current_pid());
-        user::run_next_program();
+        user::spawn_all();
     }
 
     // TODO: Mount root filesystem, start userspace init
@@ -756,7 +774,12 @@ extern "C" fn init_process() -> ! {
         unsafe { asm!("hlt") };
         wakes += 1;
         if wakes % 100 == 0 {
-            serial_print!("  init heartbeat: {} timer wakes\n", wakes);
+            serial_print!(
+                "  init heartbeat: {} wakes, {} ticks, {} switches\n",
+                wakes,
+                axiom_x_arch::sched::TICKS.load(core::sync::atomic::Ordering::Relaxed),
+                axiom_x_arch::sched::SWITCHES.load(core::sync::atomic::Ordering::Relaxed)
+            );
         }
     }
 }

@@ -173,7 +173,7 @@ fn kill_user_process(what: &str, rip: u64, detail: u64) -> ! {
         "[kernel] pid={} killed: {} in ring 3 at rip={:#x} ({:#x})",
         current_pid(), what, rip, detail
     );
-    crate::syscall::end_current_process(128 + 11);
+    crate::sched::exit_current(128 + 11);
 }
 
 extern "x86-interrupt" fn page_fault_handler(frame: InterruptStackFrame, error_code: PageFaultErrorCode) {
@@ -250,11 +250,6 @@ fn virtualization_handler_impl(frame: &InterruptStackFrame) {
 // IRQ Handlers
 // ============================================================================
 
-extern "x86-interrupt" fn timer_handler(_frame: InterruptStackFrame) {
-    timer_eoi();
-    timer_handler_impl();
-}
-
 extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
     unsafe { asm!("out 0x20, al", in("al") 0x20u8); }
 }
@@ -271,46 +266,6 @@ extern "x86-interrupt" fn spurious_handler(_frame: InterruptStackFrame) {
     // Ignore spurious interrupt
 }
 
-fn timer_eoi() {
-    unsafe { asm!("out 0x20, al", in("al") 0x20u8); }
-}
-
-fn timer_handler_impl() {
-    let scheduler = scheduler_mut();
-    let table = process_table();
-
-    let mut measurements = heapless::Vec::<ProcessMeasurement, 256>::new();
-    table.with_locked(|processes| {
-        for (i, proc) in processes.iter().enumerate() {
-            if proc.state == crate::process::ProcessState::Runnable
-                || proc.state == crate::process::ProcessState::Running
-            {
-                measurements.push(ProcessMeasurement {
-                    index: i,
-                    latency_ns: (scheduler.tick * scheduler.core_time_budget_ns).saturating_sub(proc.metrics.total_runtime_ns),
-                    dt_ns: scheduler.core_time_budget_ns,
-                    instructions_retired: proc.metrics.instructions_retired,
-                    cache_misses: proc.metrics.cache_misses,
-                    cpu_load: 0.5,
-                }).ok();
-            }
-        }
-    });
-
-    let decision = scheduler.tick(&measurements);
-
-    log::debug!(
-        "Scheduler tick {}: selected PID={}, slice={}ns, priority={:.2}",
-        decision.tick,
-        decision.selected_pid,
-        decision.time_slice_ns,
-        decision.metrics.priority
-    );
-
-if !decision.is_idle() && decision.selected_pid != current_pid() {
-        context_switch(table, decision.selected_pid);
-    }
-}
 /// Initialize IDT
 pub fn init_idt() -> &'static InterruptDescriptorTable {
     IDT.call_once(|| {
@@ -344,7 +299,10 @@ pub fn init_idt() -> &'static InterruptDescriptorTable {
         }
 
         // IRQ handlers (32-47) - remapped to 0x20-0x2F
-        idt[0x20].set_handler_fn(timer_handler);      // IRQ0 - Timer
+        // IRQ0 - Timer: trap-frame entry so the scheduler can switch threads
+        unsafe {
+            idt[0x20].set_handler_addr(VirtAddr::new(crate::sched::timer_entry as *const () as u64));
+        }
         idt[0x21].set_handler_fn(keyboard_handler);   // IRQ1 - Keyboard
         idt[0x24].set_handler_fn(mouse_handler);      // IRQ4 - Mouse (PS/2)
         idt[0x2E].set_handler_fn(ide_handler);        // IRQ14 - Primary IDE
