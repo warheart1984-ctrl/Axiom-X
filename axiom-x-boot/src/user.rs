@@ -290,7 +290,19 @@ fn release_process(p: &Process) -> u64 {
 /// Attach the persistent ledger (before this boot appends anything) and
 /// report what was found on disk.
 pub fn attach_ledger_disk() {
-    use axiom_x_arch::governance::PersistReport;
+    use axiom_x_arch::governance::{CrashPoint, PersistReport};
+    // Fault injection for crash-consistency tests: axiom.crash=<point>.
+    for arg in crate::boot_cmdline().split_whitespace() {
+        if let Some(name) = arg.strip_prefix("axiom.crash=") {
+            match CrashPoint::parse(name) {
+                Some(p) => {
+                    serial_print!("[ledger] TEST: crash injection armed at '{}'\n", name);
+                    governance::set_crash_point(p);
+                }
+                None => serial_print!("[ledger] unknown axiom.crash point '{}' ignored\n", name),
+            }
+        }
+    }
     let key = take_ledger_key();
     match governance::signer_public_of(key.as_ref()) {
         Some(pk) => {
@@ -306,7 +318,23 @@ pub fn attach_ledger_disk() {
         }
         None => serial_puts("[ledger] no signing key provisioned: checkpoints are unsigned\n"),
     }
-    match governance::persist_init(key) {
+    let report = governance::persist_init(key);
+    let recovery = match report {
+        PersistReport::Resumed { recovery, .. } | PersistReport::Refused { recovery, .. } => Some(recovery),
+        _ => None,
+    };
+    if let Some(r) = recovery {
+        if let Some(sector) = r.journal_replayed {
+            serial_print!("[ledger] recovery: replayed complete journal into sector {}\n", sector);
+        }
+        if r.torn_journal_discarded {
+            serial_puts("[ledger] recovery: discarded an incomplete journal (target untouched)\n");
+        }
+        if r.superblock_fallback {
+            serial_puts("[ledger] recovery: newer superblock copy damaged; using the older one\n");
+        }
+    }
+    match report {
         PersistReport::NoDisk(e) => {
             serial_print!("[ledger] no disk ({:?}): evidence is memory-only this boot\n", e)
         }
@@ -315,19 +343,20 @@ pub fn attach_ledger_disk() {
             sectors,
             if signed { "signed checkpoint" } else { "unsigned" }
         ),
-        PersistReport::Resumed { records, boots, head, was_signed, signed } => {
+        PersistReport::Resumed { records, boots, head, was_signed, signed, archived, .. } => {
             let hex = short_hex(&head);
             serial_print!(
-                "[ledger] boot {}: verified {} persisted records from genesis{}; resuming chain at seq {} (head {}...){}\n",
+                "[ledger] boot {}: verified {} persisted records from genesis{}; resuming chain at seq {} (head {}...){}; {} checkpoints archived\n",
                 boots,
                 records,
                 if was_signed { " and the checkpoint signature" } else { " (checkpoint was unsigned)" },
                 records,
                 core::str::from_utf8(&hex).unwrap_or("?"),
-                if signed { "; signing new checkpoints" } else { "" }
+                if signed { "; signing new checkpoints" } else { "" },
+                archived
             )
         }
-        PersistReport::Refused { reason, broken_at } => match broken_at {
+        PersistReport::Refused { reason, broken_at, .. } => match broken_at {
             Some(seq) => serial_print!(
                 "[ledger] REFUSED disk ledger: {} at record {}; disk left untouched, evidence is memory-only\n",
                 reason, seq

@@ -61,7 +61,7 @@ cat > evidence/iso/boot/grub/grub.cfg <<EOF
 set timeout=0
 set default=0
 menuentry "Axiom-X" {
-    multiboot2 /boot/kernel.elf
+    multiboot2 /boot/kernel.elf ${KERNEL_CMDLINE:-}
 ${MODULES}    boot
 }
 EOF

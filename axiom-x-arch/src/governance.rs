@@ -124,10 +124,14 @@ pub fn ledger_get(seq: u64) -> Option<(Record, Digest)> {
 // ============================================================================
 // Persistence: the chain on disk, verified at boot and continued across boots
 // ============================================================================
+//
+// Disk format v3 (see `axiom_x_ledger::store`): A/B superblocks, a one-sector
+// write-ahead journal for the only in-place rewrite (the partly filled last
+// record sector), and an append-only archive of signed checkpoints.
 
 use crate::ata;
 use axiom_x_ledger::ed25519::Keypair;
-use axiom_x_ledger::store::{self, SignatureStatus, Superblock, SuperblockError};
+use axiom_x_ledger::store::{self, Checkpoint, JournalHeader, Pick, SignatureStatus, Superblock, SuperblockError};
 use axiom_x_ledger::verify_window;
 
 /// The ledger signing key for this boot (provisioned at boot; never leaves
@@ -144,10 +148,9 @@ pub fn signer_public() -> Option<[u8; 32]> {
     SIGNER.lock().as_ref().map(|k| k.public)
 }
 
-/// Sign `sb` with this boot's key, if any.
-fn sign_checkpoint(sb: &mut Superblock) {
+fn sign_checkpoint(c: &mut Checkpoint) {
     if let Some(key) = SIGNER.lock().as_ref() {
-        sb.sign(key);
+        c.sign(key);
     }
 }
 
@@ -160,9 +163,91 @@ struct Persist {
     boots: u64,
     /// Records the disk can hold.
     capacity: u64,
+    /// Generation of the current superblock copy.
+    generation: u64,
+    /// Checkpoints archived.
+    archived: u64,
 }
 
-static PERSIST: Mutex<Persist> = Mutex::new(Persist { enabled: false, persisted: 0, boots: 0, capacity: 0 });
+static PERSIST: Mutex<Persist> =
+    Mutex::new(Persist { enabled: false, persisted: 0, boots: 0, capacity: 0, generation: 0, archived: 0 });
+
+// ----------------------------------------------------------------------------
+// Fault injection (test only)
+// ----------------------------------------------------------------------------
+
+/// Points in a save where a test can simulate power loss, selected with the
+/// kernel command line `axiom.crash=<name>`. The kernel halts there; the
+/// test harness then kills the VM and boots again to check recovery.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrashPoint {
+    None,
+    /// Journal header + data written, target sector not yet rewritten.
+    AfterJournal,
+    /// Target sector half-written (rest garbage), journal complete.
+    TornTarget,
+    /// All record sectors written, superblock not.
+    BeforeSuperblock,
+    /// New superblock copy half-written (rest garbage).
+    TornSuperblock,
+}
+
+impl CrashPoint {
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "after-journal" => Self::AfterJournal,
+            "torn-target" => Self::TornTarget,
+            "before-superblock" => Self::BeforeSuperblock,
+            "torn-superblock" => Self::TornSuperblock,
+            _ => return None,
+        })
+    }
+}
+
+static CRASH: Mutex<CrashPoint> = Mutex::new(CrashPoint::None);
+
+pub fn set_crash_point(p: CrashPoint) {
+    *CRASH.lock() = p;
+}
+
+fn crash_if(point: CrashPoint, what: &str) {
+    if *CRASH.lock() == point {
+        use core::fmt::Write;
+        let _ = writeln!(
+            crate::SerialPort,
+            "[ledger] CRASH INJECTION ({:?}): {}; halting now (simulated power loss)",
+            point, what
+        );
+        loop {
+            unsafe { core::arch::asm!("cli; hlt") };
+        }
+    }
+}
+
+/// A sector damaged by power loss mid-write: garbage in the first half,
+/// the new data in the second. Sector writes are not atomic and may tear
+/// anywhere; this is the harsh case, since in a partly filled record
+/// sector the already-persisted slots sit at the front.
+fn torn(new: &[u8; store::SECTOR]) -> [u8; store::SECTOR] {
+    let mut b = [0xAA; store::SECTOR];
+    b[store::SECTOR / 2..].copy_from_slice(&new[store::SECTOR / 2..]);
+    b
+}
+
+// ----------------------------------------------------------------------------
+// Boot: recover, choose, verify, resume
+// ----------------------------------------------------------------------------
+
+/// What boot-time recovery had to do.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Recovery {
+    /// A complete journal was replayed into this sector.
+    pub journal_replayed: Option<u64>,
+    /// An incomplete journal was found and discarded (its target untouched).
+    pub torn_journal_discarded: bool,
+    /// The newer superblock copy was damaged; the older one was used.
+    pub superblock_fallback: bool,
+}
 
 /// Outcome of attaching the persisted ledger at boot.
 #[derive(Clone, Copy, Debug)]
@@ -173,9 +258,17 @@ pub enum PersistReport {
     Formatted { sectors: u64, signed: bool },
     /// Persisted chain verified from genesis (and its checkpoint signature,
     /// if it had one) and continued.
-    Resumed { records: u64, boots: u64, head: Digest, was_signed: bool, signed: bool },
+    Resumed {
+        records: u64,
+        boots: u64,
+        head: Digest,
+        was_signed: bool,
+        signed: bool,
+        archived: u64,
+        recovery: Recovery,
+    },
     /// The disk holds something we must not continue or overwrite.
-    Refused { reason: &'static str, broken_at: Option<u64> },
+    Refused { reason: &'static str, broken_at: Option<u64>, recovery: Recovery },
 }
 
 fn read_slot(seq: u64, cache: &mut (u64, [u8; store::SECTOR])) -> Option<(Record, Digest)> {
@@ -204,139 +297,223 @@ pub fn persist_init(key_seed: Option<[u8; 32]>) -> PersistReport {
     report
 }
 
+/// Replay a complete journal (or discard a torn one) before anything else
+/// reads record sectors.
+fn recover_journal(sectors: u64, rec: &mut Recovery) -> Result<(), &'static str> {
+    let mut hdr = [0u8; store::SECTOR];
+    ata::read_sector(store::JOURNAL_HEADER_SECTOR, &mut hdr).map_err(|_| "cannot read journal")?;
+    let Some(h) = JournalHeader::decode(&hdr) else {
+        return Ok(()); // clear (or never written)
+    };
+    let mut data = [0u8; store::SECTOR];
+    ata::read_sector(store::JOURNAL_DATA_SECTOR, &mut data).map_err(|_| "cannot read journal")?;
+    if h.matches(&data) && h.target >= store::RECORD_BASE && h.target < sectors {
+        ata::write_sector(h.target, &data).map_err(|_| "journal replay failed")?;
+        ata::flush().map_err(|_| "journal replay failed")?;
+        rec.journal_replayed = Some(h.target);
+    } else {
+        // Power was lost while the journal itself was being written: the
+        // target was never touched, so dropping the journal is correct.
+        rec.torn_journal_discarded = true;
+    }
+    ata::write_sector(store::JOURNAL_HEADER_SECTOR, &[0; store::SECTOR]).map_err(|_| "cannot clear journal")?;
+    ata::flush().map_err(|_| "cannot clear journal")?;
+    Ok(())
+}
+
 fn attach_disk() -> PersistReport {
     let sectors = match ata::identify() {
         Ok(n) => n,
         Err(e) => return PersistReport::NoDisk(e),
     };
     let capacity = store::capacity(sectors);
-    let mut sb_buf = [0u8; store::SECTOR];
-    if ata::read_sector(0, &mut sb_buf).is_err() {
-        return PersistReport::Refused { reason: "cannot read superblock", broken_at: None };
+    let mut recovery = Recovery::default();
+    let refused = |reason, broken_at, recovery| PersistReport::Refused { reason, broken_at, recovery };
+
+    if let Err(why) = recover_journal(sectors, &mut recovery) {
+        return refused(why, None, recovery);
     }
-    match Superblock::decode(&sb_buf) {
-        Err(SuperblockError::Blank) => {
-            let mut sb = Superblock::unsigned(0, [0; 32], 1);
-            sign_checkpoint(&mut sb);
-            if ata::write_sector(0, &sb.encode()).and_then(|_| ata::flush()).is_err() {
-                return PersistReport::Refused { reason: "cannot format", broken_at: None };
+
+    let mut a = [0u8; store::SECTOR];
+    let mut b = [0u8; store::SECTOR];
+    if ata::read_sector(0, &mut a).and_then(|_| ata::read_sector(1, &mut b)).is_err() {
+        return refused("cannot read superblocks", None, recovery);
+    }
+    let (da, db) = (Superblock::decode(&a), Superblock::decode(&b));
+    let sb = match store::pick_superblock(da, db) {
+        Pick::Blank => {
+            // New disk: generation 1 (sector 1), checkpoint 0 archived.
+            let mut c = Checkpoint::unsigned(0, [0; 32], 1);
+            sign_checkpoint(&mut c);
+            let sb = Superblock { checkpoint: c, generation: 1, archived: 1 };
+            let ok = ata::write_sector(store::CHECKPOINT_BASE, &c.encode_archive())
+                .and_then(|_| ata::write_sector(store::superblock_sector(1), &sb.encode()))
+                .and_then(|_| ata::flush());
+            if ok.is_err() {
+                return refused("cannot format", None, recovery);
             }
-            *PERSIST.lock() = Persist { enabled: true, persisted: 0, boots: 1, capacity };
-            PersistReport::Formatted { sectors, signed: sb.signature.is_some() }
+            *PERSIST.lock() = Persist { enabled: true, persisted: 0, boots: 1, capacity, generation: 1, archived: 1 };
+            return PersistReport::Formatted { sectors, signed: c.signature.is_some() };
         }
-        Err(SuperblockError::Foreign) => PersistReport::Refused {
-            reason: "disk holds something else; not formatting over it",
-            broken_at: None,
+        Pick::Refuse(SuperblockError::Foreign) => {
+            return refused("disk holds something else; not formatting over it", None, recovery)
+        }
+        Pick::Refuse(_) => return refused("no intact superblock copy", None, recovery),
+        Pick::Use(sb, which) => {
+            let other = if which == 0 { db } else { da };
+            // The other copy is damaged (a torn write may garble even the
+            // magic, so 'foreign' counts too); a blank one is just unused.
+            recovery.superblock_fallback = matches!(other, Err(SuperblockError::Corrupt | SuperblockError::Foreign));
+            sb
+        }
+    };
+    let c = sb.checkpoint;
+    if c.total > capacity {
+        return refused("superblock claims more records than the disk holds", None, recovery);
+    }
+    // Signed history must be continued by the same key: a missing key
+    // would silently strip signatures, a different one would let anyone
+    // take over the chain.
+    let was_signed = c.signature.is_some();
+    match (was_signed, signer_public()) {
+        (true, None) => return refused("ledger is signed but no signing key is provisioned", None, recovery),
+        (true, Some(pk)) => match c.status(&pk) {
+            SignatureStatus::Valid => {}
+            SignatureStatus::WrongKey => return refused("checkpoint was signed by a different key", None, recovery),
+            _ => return refused("checkpoint signature does not verify", None, recovery),
         },
-        Err(SuperblockError::Corrupt) => {
-            PersistReport::Refused { reason: "superblock checksum mismatch", broken_at: None }
-        }
-        Ok(sb) => {
-            if sb.total > capacity {
-                return PersistReport::Refused {
-                    reason: "superblock claims more records than the disk holds",
-                    broken_at: None,
-                };
-            }
-            // Signed history must be continued by the same key: a missing
-            // key would silently strip signatures, a different one would
-            // let anyone take over the chain.
-            let was_signed = sb.signature.is_some();
-            match (was_signed, signer_public()) {
-                (true, None) => {
-                    return PersistReport::Refused {
-                        reason: "ledger is signed but no signing key is provisioned",
-                        broken_at: None,
-                    }
-                }
-                (true, Some(pk)) => match sb.signature_status(&pk) {
-                    SignatureStatus::Valid => {}
-                    SignatureStatus::WrongKey => {
-                        return PersistReport::Refused {
-                            reason: "checkpoint was signed by a different key",
-                            broken_at: None,
-                        }
-                    }
-                    _ => {
-                        return PersistReport::Refused {
-                            reason: "checkpoint signature does not verify",
-                            broken_at: None,
-                        }
-                    }
-                },
-                (false, _) => {}
-            }
-            // Re-verify every persisted link from genesis before trusting it.
-            let mut cache = (u64::MAX, [0u8; store::SECTOR]);
-            match verify_window(0, sb.total, |seq| read_slot(seq, &mut cache)) {
-                Err(seq) => PersistReport::Refused { reason: "persisted chain broken", broken_at: Some(seq) },
-                Ok(head) if head != sb.head => PersistReport::Refused {
-                    reason: "superblock head does not match the chain",
-                    broken_at: None,
-                },
-                Ok(head) => {
-                    LEDGER.lock().resume(sb.total, head);
-                    let boots = sb.boots + 1;
-                    let mut sb2 = Superblock::unsigned(sb.total, head, boots);
-                    sign_checkpoint(&mut sb2);
-                    if ata::write_sector(0, &sb2.encode()).and_then(|_| ata::flush()).is_err() {
-                        return PersistReport::Refused { reason: "cannot update superblock", broken_at: None };
-                    }
-                    *PERSIST.lock() = Persist { enabled: true, persisted: sb.total, boots, capacity };
-                    PersistReport::Resumed {
-                        records: sb.total,
-                        boots,
-                        head,
-                        was_signed,
-                        signed: sb2.signature.is_some(),
-                    }
-                }
-            }
-        }
+        (false, _) => {}
     }
+    // Re-verify every persisted link from genesis before trusting it.
+    let mut cache = (u64::MAX, [0u8; store::SECTOR]);
+    let head = match verify_window(0, c.total, |seq| read_slot(seq, &mut cache)) {
+        Err(seq) => return refused("persisted chain broken", Some(seq), recovery),
+        Ok(head) if head != c.head => return refused("superblock head does not match the chain", None, recovery),
+        Ok(head) => head,
+    };
+    LEDGER.lock().resume(c.total, head);
+    let boots = c.boots + 1;
+    *PERSIST.lock() = Persist {
+        enabled: true,
+        persisted: c.total,
+        boots,
+        capacity,
+        generation: sb.generation,
+        archived: sb.archived,
+    };
+    // Booting is a save: new boot count, signed by this boot's key.
+    if write_checkpoint(c.total, head).is_err() {
+        PERSIST.lock().enabled = false;
+        return refused("cannot update superblock", None, recovery);
+    }
+    let (signed, archived) = {
+        let p = PERSIST.lock();
+        (signer_public().is_some(), p.archived)
+    };
+    PersistReport::Resumed { records: c.total, boots, head, was_signed, signed, archived, recovery }
 }
 
-/// Write every record appended since the last flush, then the superblock,
-/// then commit the drive cache. Returns records written.
-pub fn persist_flush() -> Result<u64, &'static str> {
-    let (enabled, from, boots, capacity) = {
+// ----------------------------------------------------------------------------
+// Save
+// ----------------------------------------------------------------------------
+
+/// Archive and publish a checkpoint for (total, head): a fresh archive
+/// sector, then the superblock copy that is not current, then a cache
+/// flush. A torn superblock write leaves the current copy in charge.
+fn write_checkpoint(total: u64, head: Digest) -> Result<(), &'static str> {
+    let (boots, generation, archived) = {
         let p = PERSIST.lock();
-        (p.enabled, p.persisted, p.boots, p.capacity)
+        (p.boots, p.generation, p.archived)
+    };
+    let mut c = Checkpoint::unsigned(total, head, boots);
+    sign_checkpoint(&mut c);
+    let archived = if archived < store::CHECKPOINT_SECTORS {
+        ata::write_sector(store::CHECKPOINT_BASE + archived, &c.encode_archive()).map_err(|_| "archive write failed")?;
+        archived + 1
+    } else {
+        archived // archive full: the superblock still carries the latest
+    };
+    let next = generation + 1;
+    let sb = Superblock { checkpoint: c, generation: next, archived };
+    let image = sb.encode();
+    if *CRASH.lock() == CrashPoint::TornSuperblock {
+        let _ = ata::write_sector(store::superblock_sector(next), &torn(&image));
+        crash_if(CrashPoint::TornSuperblock, "new superblock copy half-written");
+    }
+    ata::write_sector(store::superblock_sector(next), &image).map_err(|_| "superblock write failed")?;
+    ata::flush().map_err(|_| "cache flush failed")?;
+    let mut p = PERSIST.lock();
+    p.generation = next;
+    p.archived = archived;
+    Ok(())
+}
+
+/// Write every record appended since the last save, then publish a signed
+/// checkpoint. Returns records written.
+pub fn persist_flush() -> Result<u64, &'static str> {
+    let (enabled, from, capacity) = {
+        let p = PERSIST.lock();
+        (p.enabled, p.persisted, p.capacity)
     };
     if !enabled {
         return Ok(0);
     }
     let (total, _) = ledger_summary();
+    if total == from {
+        return Ok(0);
+    }
     if total > capacity {
         PERSIST.lock().enabled = false;
         return Err("disk ledger full; persistence stopped");
     }
-    let mut sector_buf = [0u8; store::SECTOR];
-    let mut cur_sector = u64::MAX;
-    let mut last_digest = None;
-    for seq in from..total {
-        let (sector, off) = store::slot_location(seq);
-        if sector != cur_sector {
-            if cur_sector != u64::MAX {
-                ata::write_sector(cur_sector, &sector_buf).map_err(|_| "write failed")?;
-            }
-            // Partly filled sector: keep the slots already on disk.
-            ata::read_sector(sector, &mut sector_buf).map_err(|_| "read failed")?;
-            cur_sector = sector;
+    let fail = |why| {
+        PERSIST.lock().enabled = false;
+        why
+    };
+    let mut last_digest = [0u8; 32];
+    let mut seq = from;
+    while seq < total {
+        let (sector, first_off) = store::slot_location(seq);
+        // Build this sector's new image. A sector that already holds
+        // persisted slots (only possible for the first one) starts from
+        // its current contents and must be rewritten through the journal.
+        let in_place = first_off != 0;
+        let mut image = [0u8; store::SECTOR];
+        if in_place {
+            ata::read_sector(sector, &mut image).map_err(|_| fail("read failed"))?;
         }
-        let Some((r, d)) = ledger_get(seq) else {
-            PERSIST.lock().enabled = false;
-            return Err("records left memory before they were flushed; persistence stopped");
-        };
-        sector_buf[off..off + store::SLOT].copy_from_slice(&store::encode_slot(&r, &d));
-        last_digest = Some(d);
+        let mut off = first_off;
+        while off < store::SECTOR && seq < total {
+            let Some((r, d)) = ledger_get(seq) else {
+                return Err(fail("records left memory before they were flushed; persistence stopped"));
+            };
+            image[off..off + store::SLOT].copy_from_slice(&store::encode_slot(&r, &d));
+            last_digest = d;
+            off += store::SLOT;
+            seq += 1;
+        }
+        if in_place {
+            // Write-ahead: the full new image and a header naming its target,
+            // committed before the target is touched.
+            let hdr = JournalHeader::for_data(sector, &image);
+            ata::write_sector(store::JOURNAL_DATA_SECTOR, &image)
+                .and_then(|_| ata::write_sector(store::JOURNAL_HEADER_SECTOR, &hdr.encode()))
+                .and_then(|_| ata::flush())
+                .map_err(|_| fail("journal write failed"))?;
+            crash_if(CrashPoint::AfterJournal, "journal committed, target not yet rewritten");
+            if *CRASH.lock() == CrashPoint::TornTarget {
+                let _ = ata::write_sector(sector, &torn(&image));
+                crash_if(CrashPoint::TornTarget, "target sector half-written over persisted records");
+            }
+        }
+        ata::write_sector(sector, &image).map_err(|_| fail("write failed"))?;
     }
-    let Some(head) = last_digest else { return Ok(0) };
-    ata::write_sector(cur_sector, &sector_buf).map_err(|_| "write failed")?;
-    let mut sb = Superblock::unsigned(total, head, boots);
-    sign_checkpoint(&mut sb);
-    ata::write_sector(0, &sb.encode()).map_err(|_| "superblock write failed")?;
-    ata::flush().map_err(|_| "cache flush failed")?;
+    crash_if(CrashPoint::BeforeSuperblock, "all record sectors written, superblock not");
+    write_checkpoint(total, last_digest).map_err(fail)?;
+    // The new superblock now covers the rewrite: retire the journal.
+    ata::write_sector(store::JOURNAL_HEADER_SECTOR, &[0; store::SECTOR])
+        .and_then(|_| ata::flush())
+        .map_err(|_| fail("cannot clear journal"))?;
     PERSIST.lock().persisted = total;
     Ok(total - from)
 }

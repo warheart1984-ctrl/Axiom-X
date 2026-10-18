@@ -89,6 +89,13 @@ pub struct MemoryRegion {
 
 /// Modules handed over by the bootloader, kept for init.
 static mut BOOT_MODULES: Vec<ModuleInfo, 16> = Vec::new();
+/// Kernel command line from the bootloader, kept for init.
+static mut BOOT_CMDLINE: Vec<u8, 256> = Vec::new();
+
+/// The kernel command line (empty if none / not UTF-8).
+pub fn boot_cmdline() -> &'static str {
+    core::str::from_utf8(unsafe { &*core::ptr::addr_of!(BOOT_CMDLINE) }).unwrap_or("")
+}
 
 /// Modules handed over by the bootloader (physical ranges + names).
 pub fn boot_modules() -> &'static [ModuleInfo] {
@@ -868,6 +875,7 @@ fn ax_kernel_entry_continue(boot_info: BootInfo) -> ! {
     // Keep the module list (GRUB `module2` images, e.g. user ELF programs);
     // their memory is reserved from the frame allocator above.
     unsafe { BOOT_MODULES = boot_info.modules.clone(); }
+    unsafe { BOOT_CMDLINE = boot_info.cmdline.clone(); }
     serial_print!("  Boot modules: {}\n", boot_info.modules.len());
 
     // 2. Initialize early page tables

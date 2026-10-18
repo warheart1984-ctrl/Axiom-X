@@ -1,0 +1,178 @@
+YAXIOM-X BOOT
+Parsing multiboot2 info...
+  Kernel: 0x100000 - 0x216260
+  Memory regions: 7
+Initializing kernel frame allocator...
+  Frame allocator will be initialized by kernel
+Initializing boot allocator...
+  Boot modules: 9
+Setting up page tables...
+  PML4 at 0x9ab000
+Initializing early heap...
+Initializing CPU features...
+Initializing architecture...
+Initializing movie subsystem...
+Creating process table...
+  ProcessTable: 540696 bytes
+Initializing scheduler...
+Creating init process...
+  Init PID: 1 (kernel stack top 0xffff800008011000)
+Starting scheduler...
+PID 1 (init) running on its own stack; interrupts enabled
+[ledger] TEST: crash injection armed at 'torn-target'
+[ledger] signing key provisioned; public key 5b82c607bffbf55da01a58b242584edb208cb412e030244ddfc7b7c579705f8a
+[ledger] boot 3: verified 2362 persisted records from genesis and the checkpoint signature; resuming chain at seq 2362 (head 49a5e67e10f8aae4...); signing new checkpoints; 7 checkpoints archived
+[kernel] === round 1: frames in use 281 ===
+[kernel] spawned 'hello' as pid 2: 171 bytes embedded, PML4 0xac4000
+hello from ring 3
+[syscall] pid=2 write(nr=1, a0=0x1) -> 18
+[syscall] pid=2 write(nr=1, a0=0x1) -> -14
+ring 3: kernel pointer refused with -EFAULT
+[syscall] pid=2 write(nr=1, a0=0x1) -> 44
+[syscall] pid=2 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 2 (parent 0) exited with code 0
+[kernel] spawned 'probe' as pid 3: 27 bytes embedded, PML4 0xada000
+[kernel] pid=3 killed: page fault in ring 3 at rip=0x800000000a (0xffff800000100000)
+[kernel] pid 3 (parent 0) killed by signal 11
+[kernel] spawned 'spin-A' as pid 4: 74 bytes embedded, PML4 0xaf0000
+[kernel] spawned 'spin-B' as pid 5: 74 bytes embedded, PML4 0xb06000
+[syscall] pid=6 getpid(nr=39, a0=0x0) -> 6
+[init] user-space init running as pid 6
+[syscall] pid=6 write(nr=1, a0=0x1) -> 40
+[kernel] loaded ELF 'elf-hello' as pid 7 (parent 6): 16880 bytes, 3 segments, 5 pages, PML4 0xb3a000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003467) -> 7
+[kernel] loaded ELF 'elf-init' as pid 6 (parent 0): 20944 bytes, 3 segments, 5 pages, PML4 0xb1c000
+[init] spawn elf-hello rights 0x80 -> pid 7
+[syscall] pid=6 write(nr=1, a0=0x1) -> 44
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[syscall] pid=7 getpid(nr=39, a0=0x0) -> 7
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[elf-hello] pid 7: Rust ELF running in ring 3
+[syscall] pid=7 write(nr=1, a0=0x1) -> 46
+[kernel] loaded ELF 'elf-fast' as pid 8 (parent 6): 16800 bytes, 3 segments, 4 pages, PML4 0xb58000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003478) -> 8
+[syscall] pid=8 getpid(nr=39, a0=0x0) -> 8
+[init] spawn elf-fast rights 0x80 -> pid 8
+[syscall] pid=6 write(nr=1, a0=0x1) -> 43
+[kernel] loaded ELF 'elf-slow' as pid 9 (parent 6): 16800 bytes, 3 segments, 4 pages, PML4 0xb75000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003470) -> 9
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[init] spawn elf-slow rights 0x80 -> pid 9
+[syscall] pid=6 write(nr=1, a0=0x1) -> 43
+[syscall] pid=9 getpid(nr=39, a0=0x0) -> 9
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[elf-hello] .data initialized: true, .bss zeroed: true
+[syscall] pid=7 write(nr=1, a0=0x1) -> 55
+[kernel] loaded ELF 'elf-crash' as pid 10 (parent 6): 16800 bytes, 3 segments, 4 pages, PML4 0xb92000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003480) -> 10
+[syscall] pid=9 nanosleep(nr=35, a0=0x19) -> 0
+[init] spawn elf-crash rights 0x80 -> pid 10
+[syscall] pid=6 write(nr=1, a0=0x1) -> 45
+[elf-fast] pid 8 woke 1/5 at ~100 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[kernel] loaded ELF 'elf-noperm' as pid 11 (parent 6): 8520 bytes, 2 segments, 2 pages, PML4 0xbaf000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003489) -> 11
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[syscall] pid=11 write(nr=1, a0=0x1) -> -1
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[syscall] pid=11 ax_spawn_module(nr=520, a0=0x8000001022) -> -1
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[elf-fast] pid 8 woke 2/5 at ~200 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[syscall] pid=10 getpid(nr=39, a0=0x0) -> 10
+[init] spawn elf-noperm rights 0x0 -> pid 11
+[syscall] pid=6 write(nr=1, a0=0x1) -> 45
+[elf-slow] pid 9 woke 1/2 at ~250 ms (sleep -> 0)
+[syscall] pid=9 write(nr=1, a0=0x1) -> 50
+[kernel] ELF 'elf-bad-wx' rejected: segment is both writable and executable (W^X)
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003493) -> -8
+[syscall] pid=9 nanosleep(nr=35, a0=0x19) -> 0
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[init] spawn elf-bad-wx rights 0x80 -> -8 (ENOEXEC)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 52
+[elf-crash] pid 10 reading a kernel address
+[syscall] pid=10 write(nr=1, a0=0x1) -> 44
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x800000349d) -> -2
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[elf-hello] back after sched_yield, exiting
+[syscall] pid=7 write(nr=1, a0=0x1) -> 44
+[syscall] pid=11 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 11 (parent 6) exited with code 0
+[init] spawn no-such-program rights 0x80 -> -2 (ENOENT)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 56
+[elf-slow] pid 9 woke 2/2 at ~500 ms (sleep -> 0)
+[syscall] pid=9 write(nr=1, a0=0x1) -> 50
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003467) -> -1
+[elf-fast] pid 8 woke 3/5 at ~300 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[init] spawn elf-hello rights 0x2000080 -> -1 (EPERM)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 54
+[syscall] pid=9 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 9 (parent 6) exited with code 0
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[syscall] pid=7 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 7 (parent 6) exited with code 0
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[syscall] pid=5 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 5 (parent 0) exited with code 0
+[elf-fast] pid 8 woke 4/5 at ~400 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[kernel] pid=10 killed: page fault in ring 3 at rip=0x800000119b (0xffff800000100000)
+[kernel] pid 10 (parent 6) killed by signal 11
+[syscall] pid=6 wait4(nr=61, a0=0x7) -> 7
+[syscall] pid=4 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 4 (parent 0) exited with code 0
+[init] reaped pid 7: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 40
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 9
+[init] reaped pid 9: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 40
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 10
+[init] reaped pid 10: killed by signal 11
+[syscall] pid=6 write(nr=1, a0=0x1) -> 42
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 11
+[init] reaped pid 11: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 41
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[elf-fast] pid 8 woke 5/5 at ~500 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[syscall] pid=8 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 8 (parent 6) exited with code 0
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 8
+[init] reaped pid 8: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 40
+[kernel] loaded ELF 'elf-audit' as pid 12 (parent 6): 25040 bytes, 3 segments, 6 pages, PML4 0xb74000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000035b0) -> 12
+[syscall] pid=12 getpid(nr=39, a0=0x0) -> 12
+[audit] pid 12: verifying ledger records 2061..2461 (of 2461)
+[syscall] pid=12 write(nr=1, a0=0x1) -> 62
+[audit] chain intact: 400 records, head e7e814229a222031... (denies 5, faults 2, creates 11, reaps 11)
+[syscall] pid=12 write(nr=1, a0=0x1) -> 103
+[audit] forged record 2261 detected: yes
+[syscall] pid=12 write(nr=1, a0=0x1) -> 41
+[audit] ledger audit: PASS
+[syscall] pid=12 write(nr=1, a0=0x1) -> 27
+[syscall] pid=12 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 12 (parent 6) exited with code 0
+[syscall] pid=6 wait4(nr=61, a0=0xc) -> 12
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> -10
+[init] all children reaped: 5/5 (exit 0: 4, signaled: 1); expected spawn failures: 3/3; audit ok: true; wait(-1) now -> Err(-10)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 129
+[init] process-lifecycle check: PASS
+[syscall] pid=6 write(nr=1, a0=0x1) -> 37
+[syscall] pid=6 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 6 (parent 0) exited with code 0
+[ledger] CRASH INJECTION (TornTarget): target sector half-written over persisted records; halting now (simulated power loss)
