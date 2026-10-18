@@ -29,6 +29,16 @@ name = "elf-slow"
 path = "src/bin/elf-slow.rs"
 test = false
 
+[[bin]]
+name = "elf-init"
+path = "src/bin/elf-init.rs"
+test = false
+
+[[bin]]
+name = "elf-crash"
+path = "src/bin/elf-crash.rs"
+test = false
+
 [profile.release]
 opt-level = "s"
 panic = "abort"

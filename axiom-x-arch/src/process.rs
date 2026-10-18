@@ -150,6 +150,8 @@ pub struct Process {
     pub saved_rsp: u64,
     /// While `Blocked` in `nanosleep`: the PIT tick at which to wake (0 = none).
     pub wake_tick: u64,
+    /// While `Blocked` in `wait4`: the child awaited (-1 = any, 0 = none).
+    pub waiting_for: i64,
 
     // Memory management
     pub page_table_root: PhysFrame<Size4KiB>,
@@ -312,6 +314,11 @@ impl ProcessTable {
     /// Get process count
     pub fn count(&self) -> usize {
         self.locked(|p| p.len())
+    }
+
+    /// Mutate all processes under the table lock (interrupts off).
+    pub fn with_locked_mut<R>(&self, f: impl FnOnce(&mut Vec<Process, MAX_PROCESSES>) -> R) -> R {
+        self.locked(f)
     }
 
     /// Access all processes under the table lock
@@ -555,6 +562,7 @@ pub fn init_kernel_process(
         affinity: Some(0),
         saved_rsp: 0,
         wake_tick: 0,
+        waiting_for: 0,
         page_table_root,
         kernel_stack_top: stack_top,
         user_stack_top: None,
@@ -590,6 +598,7 @@ pub fn init_user_process(
         affinity: Some(0),
         saved_rsp: 0,
         wake_tick: 0,
+        waiting_for: 0,
         page_table_root,
         kernel_stack_top,
         user_stack_top: Some(user_stack_top),

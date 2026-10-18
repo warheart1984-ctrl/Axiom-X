@@ -924,7 +924,7 @@ extern "C" fn init_process() -> ! {
     // address space. init stays runnable and is preempted like they are.
     #[cfg(feature = "freestanding")]
     {
-        axiom_x_arch::syscall::set_process_end_hook(user::on_process_end);
+        user::install_hooks();
         user::run_rounds();
     }
 

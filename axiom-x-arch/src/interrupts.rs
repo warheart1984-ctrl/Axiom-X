@@ -165,7 +165,7 @@ fn from_user(frame: &InterruptStackFrame) -> bool {
 }
 
 /// A fault in ring 3 is the process's fault, not the kernel's: report it as
-/// evidence and end the process with a signal-style code (128 + SIGSEGV).
+/// evidence and end the process as killed by SIGSEGV (exit code -11).
 fn kill_user_process(what: &str, rip: u64, detail: u64) -> ! {
     use core::fmt::Write;
     let _ = writeln!(
@@ -173,7 +173,7 @@ fn kill_user_process(what: &str, rip: u64, detail: u64) -> ! {
         "[kernel] pid={} killed: {} in ring 3 at rip={:#x} ({:#x})",
         current_pid(), what, rip, detail
     );
-    crate::sched::exit_current(128 + 11);
+    crate::sched::exit_current(-crate::syscall::SIGSEGV);
 }
 
 extern "x86-interrupt" fn page_fault_handler(frame: InterruptStackFrame, error_code: PageFaultErrorCode) {

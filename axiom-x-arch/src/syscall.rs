@@ -23,11 +23,27 @@ pub const SYS_SCHED_YIELD: u64 = 24;
 pub const SYS_NANOSLEEP: u64 = 35;
 pub const SYS_GETPID: u64 = 39;
 pub const SYS_EXIT: u64 = 60;
+pub const SYS_WAIT4: u64 = 61;
+/// Axiom-X: start a boot module (by name) as a child of the caller.
+/// Distinct from the declared `AxSpawn` (511), whose `SpawnRequest` ABI
+/// (caller-chosen entry/stack) is not implemented.
+pub const SYS_AX_SPAWN_MODULE: u64 = 520;
 
+pub const ENOENT: i64 = 2;
+pub const ENOEXEC: i64 = 8;
 pub const EBADF: i64 = 9;
+pub const ECHILD: i64 = 10;
 pub const EFAULT: i64 = 14;
 pub const EINVAL: i64 = 22;
 pub const ENOSYS: i64 = 38;
+
+/// Signal number recorded when the kernel kills a process for a fault.
+/// Exit codes are stored as `code >= 0` for `exit(code)` and `-signal`
+/// for a kill, and reported by `wait4` in the Linux status encoding.
+pub const SIGSEGV: i32 = 11;
+
+/// Longest module name accepted by `AX_SPAWN_MODULE`.
+pub const MAX_MODULE_NAME: u64 = 64;
 
 /// Exclusive upper bound of the canonical lower (user) half.
 pub const USER_SPACE_END: u64 = 0x0000_8000_0000_0000;
@@ -36,26 +52,71 @@ pub const MAX_WRITE_LEN: u64 = 4096;
 
 /// Notified when a user process ends, normally (`exit`) or because the
 /// kernel killed it (fault in ring 3). The scheduler then picks what runs.
-pub type ProcessEndHook = fn(pid: u32, code: i32);
+pub type ProcessEndHook = fn(pid: u32, parent: Option<u32>, code: i32);
+
+/// Creates a process from a named boot module as a child of `parent`;
+/// returns its PID or a negative errno (`-ENOENT`, `-ENOEXEC`, ...).
+pub type SpawnHook = fn(name: &str, parent: u32) -> i64;
+
+/// Frees what a reaped process owned (address space, kernel stack);
+/// returns frames freed. Implemented by the boot crate, which owns memory.
+pub type ReleaseHook = fn(&crate::process::Process) -> u64;
 
 static PROCESS_END_HOOK: Once<ProcessEndHook> = Once::new();
+static SPAWN_HOOK: Once<SpawnHook> = Once::new();
+static RELEASE_HOOK: Once<ReleaseHook> = Once::new();
 
 pub fn set_process_end_hook(hook: ProcessEndHook) {
     PROCESS_END_HOOK.call_once(|| hook);
+}
+
+pub fn set_spawn_hook(hook: SpawnHook) {
+    SPAWN_HOOK.call_once(|| hook);
+}
+
+pub fn set_release_hook(hook: ReleaseHook) {
+    RELEASE_HOOK.call_once(|| hook);
+}
+
+/// Free a removed process's resources through the release hook.
+pub fn release(proc: &crate::process::Process) -> u64 {
+    RELEASE_HOOK.get().map_or(0, |h| h(proc))
 }
 
 /// Mark the current process terminated and notify the end hook. The caller
 /// must then switch away (the thread must never be resumed).
 pub fn mark_ended(code: i32) {
     let pid = current_pid();
-    if let Some(mut guard) = crate::interrupts::process_table().get_mut(pid) {
-        let proc = guard.get_mut();
-        proc.state = ProcessState::Terminated;
-        proc.exit_code = Some(code);
-    }
+    // One critical section: become a zombie, hand children to the kernel
+    // reaper, and wake a parent blocked in wait4 for us.
+    let parent = crate::interrupts::process_table().with_locked_mut(|ps| {
+        let mut parent = None;
+        if let Some(p) = ps.iter_mut().find(|p| p.pid == pid) {
+            p.state = ProcessState::Terminated;
+            p.exit_code = Some(code);
+            parent = p.parent_pid;
+        }
+        for child in ps.iter_mut().filter(|c| c.parent_pid == Some(pid)) {
+            child.parent_pid = None;
+        }
+        if let Some(pp) = parent {
+            if let Some(w) = ps.iter_mut().find(|q| q.pid == pp) {
+                if w.state == ProcessState::Blocked && (w.waiting_for == -1 || w.waiting_for == pid as i64) {
+                    w.waiting_for = 0;
+                    w.state = ProcessState::Runnable;
+                }
+            }
+        }
+        parent
+    });
     if let Some(hook) = PROCESS_END_HOOK.get() {
-        hook(pid, code);
+        hook(pid, parent, code);
     }
+}
+
+/// Linux `wait4` status word for a stored exit code (see `SIGSEGV`).
+pub fn wait_status(code: i32) -> i32 {
+    if code >= 0 { (code & 0xff) << 8 } else { (-code) & 0x7f }
 }
 
 /// IDT entry for vector 0x80. The gate must have DPL 3 so ring 3 may use it.
@@ -94,6 +155,17 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
             }
             Err(e) => e,
         },
+        SYS_AX_SPAWN_MODULE => sys_spawn_module(pid, a0, a1),
+        SYS_WAIT4 => match sys_wait4(pid, a0 as i64, a1) {
+            WaitOutcome::Done(r) => r,
+            WaitOutcome::Block => {
+                // Restart semantics: when woken, re-execute the 2-byte
+                // `int 0x80` (RAX still holds the syscall number), which
+                // then finds the zombie. No half-done state survives a block.
+                frame.rip -= 2;
+                return switch_away(frame_rsp);
+            }
+        },
         _ => -ENOSYS,
     };
 
@@ -108,6 +180,80 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
     log_syscall(pid, name_of(nr), nr, a0, result);
     frame.rax = result as u64;
     frame_rsp
+}
+
+/// Copy a module name from user memory and ask the spawn hook to start it.
+fn sys_spawn_module(parent: u32, name_ptr: u64, len: u64) -> i64 {
+    if len == 0 || len > MAX_MODULE_NAME {
+        return -EINVAL;
+    }
+    if !user_range_accessible(name_ptr, len, false) {
+        return -EFAULT;
+    }
+    let mut buf = [0u8; MAX_MODULE_NAME as usize];
+    let n = len as usize;
+    unsafe { core::ptr::copy_nonoverlapping(name_ptr as *const u8, buf.as_mut_ptr(), n) };
+    let Ok(name) = core::str::from_utf8(&buf[..n]) else {
+        return -EINVAL;
+    };
+    match SPAWN_HOOK.get() {
+        Some(hook) => hook(name, parent),
+        None => -ENOSYS,
+    }
+}
+
+enum WaitOutcome {
+    Done(i64),
+    Block,
+}
+
+/// `wait4(pid, *status, ..)`: `pid` = -1 (any child) or a child PID.
+/// Reaps a terminated child (frees it via the release hook), writes the
+/// status, returns its PID; blocks if children exist but none has ended;
+/// `-ECHILD` if there is nothing to wait for.
+fn sys_wait4(me: u32, which: i64, status_ptr: u64) -> WaitOutcome {
+    if which == 0 || which < -1 {
+        return WaitOutcome::Done(-EINVAL); // process groups are not supported
+    }
+    if status_ptr != 0 && !user_range_accessible(status_ptr, 4, true) {
+        return WaitOutcome::Done(-EFAULT);
+    }
+    let table = crate::interrupts::process_table();
+    let (has_child, zombie) = table.with_locked_mut(|ps| {
+        let mut has_child = false;
+        let mut zombie = None;
+        for c in ps.iter() {
+            if c.parent_pid == Some(me) && (which == -1 || c.pid as i64 == which) {
+                has_child = true;
+                if c.state == ProcessState::Terminated {
+                    zombie = Some((c.pid, c.exit_code.unwrap_or(0)));
+                    break;
+                }
+            }
+        }
+        if has_child && zombie.is_none() {
+            // Block in the same critical section, so a child cannot end
+            // between the check and the block and miss the wake-up.
+            if let Some(w) = ps.iter_mut().find(|p| p.pid == me) {
+                w.state = ProcessState::Blocked;
+                w.waiting_for = which;
+            }
+        }
+        (has_child, zombie)
+    });
+    match (has_child, zombie) {
+        (false, _) => WaitOutcome::Done(-ECHILD),
+        (true, None) => WaitOutcome::Block,
+        (true, Some((child, code))) => {
+            if let Some(p) = table.remove(child) {
+                release(&p);
+            }
+            if status_ptr != 0 {
+                unsafe { (status_ptr as *mut i32).write(wait_status(code)) };
+            }
+            WaitOutcome::Done(child as i64)
+        }
+    }
 }
 
 /// Leave the current thread (ended, sleeping, or yielding) and return the
@@ -162,6 +308,8 @@ fn name_of(nr: u64) -> &'static str {
         SYS_GETPID => "getpid",
         SYS_SCHED_YIELD => "sched_yield",
         SYS_NANOSLEEP => "nanosleep",
+        SYS_WAIT4 => "wait4",
+        SYS_AX_SPAWN_MODULE => "ax_spawn_module",
         _ => "unknown",
     }
 }

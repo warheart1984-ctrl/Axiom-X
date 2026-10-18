@@ -18,6 +18,27 @@ pub mod nr {
     pub const NANOSLEEP: u64 = 35;
     pub const GETPID: u64 = 39;
     pub const EXIT: u64 = 60;
+    pub const WAIT4: u64 = 61;
+    /// Axiom-X: start a boot module by name as a child process.
+    pub const AX_SPAWN_MODULE: u64 = 520;
+}
+
+/// errno values the kernel returns (negated).
+pub mod errno {
+    pub const ENOENT: i64 = 2;
+    pub const ENOEXEC: i64 = 8;
+    pub const ECHILD: i64 = 10;
+    pub const EINVAL: i64 = 22;
+
+    pub fn name(e: i64) -> &'static str {
+        match -e {
+            ENOENT => "ENOENT",
+            ENOEXEC => "ENOEXEC",
+            ECHILD => "ECHILD",
+            EINVAL => "EINVAL",
+            _ => "?",
+        }
+    }
 }
 
 /// Raw three-argument system call.
@@ -49,6 +70,36 @@ pub fn exit(code: i32) -> ! {
     loop {
         core::hint::spin_loop();
     }
+}
+
+/// Start the boot module `name` as a child; returns its PID or `-errno`.
+pub fn spawn(name: &str) -> i64 {
+    unsafe { syscall3(nr::AX_SPAWN_MODULE, name.as_ptr() as u64, name.len() as u64, 0) }
+}
+
+/// How a child ended, decoded from the `wait4` status word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExitStatus {
+    Exited(i32),
+    Signaled(i32),
+}
+
+impl ExitStatus {
+    pub fn from_raw(status: i32) -> Self {
+        if status & 0x7f == 0 {
+            ExitStatus::Exited((status >> 8) & 0xff)
+        } else {
+            ExitStatus::Signaled(status & 0x7f)
+        }
+    }
+}
+
+/// `wait4(pid, &status, 0, NULL)`: `pid` = -1 for any child. Blocks until a
+/// child ends; returns `(pid, status)` or `Err(-errno)`.
+pub fn wait(pid: i64) -> Result<(u32, ExitStatus), i64> {
+    let mut status: i32 = 0;
+    let r = unsafe { syscall3(nr::WAIT4, pid as u64, &mut status as *mut i32 as u64, 0) };
+    if r < 0 { Err(r) } else { Ok((r as u32, ExitStatus::from_raw(status))) }
 }
 
 pub fn getpid() -> u32 {
