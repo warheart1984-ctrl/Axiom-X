@@ -16,3 +16,5 @@ evidence/*.img
 *.key
 # Hyper-V test VM files (VHD copy of the ledger, VM config)
 evidence/hyperv/
+# backups hyperv-run.ps1 -UseLedger keeps of the disk images
+evidence/*.before-hyperv
