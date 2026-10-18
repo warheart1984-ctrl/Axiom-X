@@ -27,10 +27,10 @@ fn help() {
     println!("  clocks                compare the PIT, TSC and RTC since boot");
     println!("  ps                    processes: pid, parent, state, rights, name");
     println!("  rights                this shell's rights");
-    println!("  run <program> [+evidence] [+read] [-send]");
+    println!("  run <program> [+evidence] [+read] [+write] [+spawn] [-send]");
     println!("                        start a boot module (or a file: /path) and wait; it gets");
-    println!("                        SEND by default, +evidence adds EVIDENCE, +read READ,");
-    println!("                        -send removes SEND");
+    println!("                        SEND by default; each +flag adds that right, -send");
+    println!("                        removes SEND (e.g. run elf-fsstress +read +write +spawn)");
     println!("  ls                    files: size, version, SHA-256 prefix, name");
     println!("  cat <file>            print a file (hash-verified by the kernel)");
     println!("  write <file> <text>   create or replace a file with text");
@@ -139,7 +139,7 @@ fn cmd_clocks() {
 fn cmd_run(args: &str) {
     let mut parts = args.split_whitespace();
     let Some(name) = parts.next() else {
-        println!("usage: run <program> [+evidence] [+read] [-send]");
+        println!("usage: run <program> [+evidence] [+read] [+write] [+spawn] [-send]");
         return;
     };
     let mut rights = Rights::SEND.bits();
@@ -147,6 +147,8 @@ fn cmd_run(args: &str) {
         match flag {
             "+evidence" => rights |= Rights::EVIDENCE.bits(),
             "+read" => rights |= Rights::READ.bits(),
+            "+write" => rights |= Rights::WRITE.bits(),
+            "+spawn" => rights |= Rights::SPAWN.bits(),
             "-send" => rights &= !Rights::SEND.bits(),
             other => {
                 println!("run: unknown flag '{}'", other);

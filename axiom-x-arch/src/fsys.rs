@@ -10,8 +10,15 @@
 //!   back behind the kernel's back: it is mounted **read-only** and the
 //!   mismatch is recorded. Every mount appends an `FS_MOUNT` record.
 //! - Reads re-verify each file's hash (in `axiom-x-fs`).
+//! - Access is serialized by a **sleeping lock** (`FsGuard`): the file-system
+//!   system calls run with interrupts on, so the holder can be preempted;
+//!   a process that finds the lock taken blocks (`WAIT_FS`) instead of
+//!   spinning, and is woken when it is released. Disk commands keep their
+//!   own short interrupts-off sections (`ata`).
 //!
 //! Status: `partial` — exercised in QEMU; whole-file operations only.
+
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use axiom_x_fs::{BlockDev, Entry, Fs, FsError, MountError, MAX_FILE_SIZE, SECTOR};
 
@@ -166,8 +173,53 @@ pub fn fs_errno(e: FsError) -> i64 {
     }
 }
 
+/// PID holding the file-system lock (0 = free).
+static FS_OWNER: AtomicU32 = AtomicU32::new(0);
+/// Lock acquisitions, and how many of them had to block first.
+pub static FS_LOCK_ACQUIRES: AtomicU64 = AtomicU64::new(0);
+pub static FS_LOCK_WAITS: AtomicU64 = AtomicU64::new(0);
+
+/// Held file-system lock; released (waking any waiters) on drop.
+struct FsGuard;
+
+impl FsGuard {
+    fn acquire() -> FsGuard {
+        let pid = crate::process::current_pid();
+        loop {
+            let taken = x86_64::instructions::interrupts::without_interrupts(|| {
+                if FS_OWNER.load(Ordering::Relaxed) == 0 {
+                    FS_OWNER.store(pid, Ordering::Relaxed);
+                    true
+                } else {
+                    FS_LOCK_WAITS.fetch_add(1, Ordering::Relaxed);
+                    crate::sched::block_current_on(crate::sched::WAIT_FS);
+                    false
+                }
+            });
+            if taken {
+                FS_LOCK_ACQUIRES.fetch_add(1, Ordering::Relaxed);
+                return FsGuard;
+            }
+        }
+    }
+}
+
+impl Drop for FsGuard {
+    fn drop(&mut self) {
+        x86_64::instructions::interrupts::without_interrupts(|| {
+            FS_OWNER.store(0, Ordering::Relaxed);
+            crate::sched::wake_all(crate::sched::WAIT_FS);
+        });
+    }
+}
+
+/// Run `f` with exclusive access to the file system. May block; callers
+/// may be preempted inside `f` (interrupts are whatever the caller had).
 fn with_fs<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    crate::latency::irq_off(crate::latency::Site::FsOperation, || f(&mut STATE.lock()))
+    let _g = FsGuard::acquire();
+    // Never contended: every path to STATE after boot holds the FS lock.
+    let mut st = STATE.lock();
+    f(&mut st)
 }
 
 fn mounted(st: &mut State) -> Result<&mut Fs<SlaveDisk>, i64> {
@@ -203,16 +255,18 @@ pub fn read(name: &str, out: &mut [u8]) -> Result<usize, i64> {
 
 /// Apply a change, then anchor the new root in the ledger as `pid`'s commit.
 fn change(pid: u32, op: impl FnOnce(&mut Fs<SlaveDisk>) -> Result<(), FsError>) -> Result<(), i64> {
-    let root = with_fs(|st| {
+    with_fs(|st| {
         if !st.writable {
             return Err(-errno::EROFS);
         }
         let fs = mounted(st)?;
         op(fs).map_err(fs_errno)?;
-        Ok(fs.root())
-    })?;
-    record_root(kind::FS_COMMIT, axiom_x_ledger::decision::ALLOW, pid, &root);
-    Ok(())
+        // Anchor while still holding the FS lock: commits and their ledger
+        // records must be in the same order, or a writer preempted between
+        // the two would leave an older root as the ledger's newest anchor.
+        record_root(kind::FS_COMMIT, axiom_x_ledger::decision::ALLOW, pid, &fs.root());
+        Ok(())
+    })
 }
 
 pub fn write(pid: u32, name: &str, data: &[u8]) -> Result<(), i64> {
@@ -226,16 +280,24 @@ pub fn delete(pid: u32, name: &str) -> Result<(), i64> {
     change(pid, |fs| fs.delete(name))
 }
 
-/// Buffer for loading a program from the file system (single CPU; used
-/// only inside the spawn syscall, with interrupts off).
+/// Buffer for loading a program from the file system. Used only inside
+/// `with_program`, under the file-system lock, which makes it exclusive.
 static mut LOAD_BUF: [u8; MAX_FILE_SIZE] = [0; MAX_FILE_SIZE];
 
-/// Read `name` into the kernel load buffer and return its bytes.
-pub fn load_program(name: &str) -> Result<&'static [u8], i64> {
+/// Read program `name` (hash-verified) and call `f` with its bytes, holding
+/// the file-system lock until `f` returns: the load buffer is shared, so
+/// loading and starting the program form one exclusive step.
+pub fn with_program<R>(name: &str, f: impl FnOnce(&[u8]) -> R) -> Result<R, i64> {
+    let _g = FsGuard::acquire();
+    let mut st = STATE.lock();
+    if !st.mounted {
+        return Err(-errno::EIO);
+    }
     let buf = unsafe { &mut *core::ptr::addr_of_mut!(LOAD_BUF) };
-    let n = read(name, buf)?;
+    let n = st.fs.read(name, buf).map_err(fs_errno)?;
     if n > buf.len() {
         return Err(-errno::EFBIG);
     }
-    Ok(&buf[..n])
+    drop(st);
+    Ok(f(&buf[..n]))
 }

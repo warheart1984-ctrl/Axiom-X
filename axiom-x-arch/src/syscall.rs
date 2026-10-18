@@ -179,12 +179,30 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
     // gate): time it for the latency table.
     let t0 = crate::latency::now();
     let nr = unsafe { (*(frame_rsp as *const TrapFrame)).rax };
-    let rsp = syscall_dispatch_inner(frame_rsp);
+    let mut t0 = t0;
+    let rsp = syscall_dispatch_inner(frame_rsp, &mut t0);
     crate::latency::end_syscall(nr, t0);
     rsp
 }
 
-fn syscall_dispatch_inner(frame_rsp: u64) -> u64 {
+/// Run a long system call body with interrupts **on**: file-system calls
+/// and spawn, which do disk I/O, hashing and ELF loading. The thread may be
+/// preempted inside `f`, like a kernel thread; shared state it touches is
+/// protected by preemption-safe locks (the sleeping FS lock, `IrqMutex`,
+/// the interrupt-safe process table, `irq_off` ledger appends). Entry
+/// (rights check, argument fetch) and exit (result, trace, evidence) stay
+/// interrupts-off. For latency accounting the interrupts-off prefix is
+/// recorded here and `t0` restarts for the suffix.
+fn preemptible(nr: u64, t0: &mut u64, f: impl FnOnce() -> i64) -> i64 {
+    crate::latency::end_syscall(nr, *t0);
+    x86_64::instructions::interrupts::enable();
+    let r = f();
+    x86_64::instructions::interrupts::disable();
+    *t0 = crate::latency::now();
+    r
+}
+
+fn syscall_dispatch_inner(frame_rsp: u64, t0: &mut u64) -> u64 {
     let frame = unsafe { &mut *(frame_rsp as *mut TrapFrame) };
     let (nr, a0, a1, a2) = (frame.rax, frame.rdi, frame.rsi, frame.rdx);
     let pid = current_pid();
@@ -218,12 +236,21 @@ fn syscall_dispatch_inner(frame_rsp: u64) -> u64 {
         },
         SYS_AX_PROC_LIST => sys_proc_list(a0, a1),
         SYS_AX_LATENCY => sys_latency(a0, a1, a2),
-        SYS_AX_FS_LIST => sys_fs_list(a0, a1),
-        SYS_AX_FS_INFO => sys_fs_info(a0),
-        SYS_AX_FS_READ => sys_fs_read(a0, a1, a2, frame.r10),
-        SYS_AX_FS_WRITE => sys_fs_write(pid, a0, a1, a2, frame.r10),
-        SYS_AX_FS_DELETE => sys_fs_delete(pid, a0, a1),
-        SYS_AX_FS_INSTALL => sys_fs_install(pid, a0, a1, a2, frame.r10),
+        SYS_AX_FS_LIST => preemptible(nr, t0, || sys_fs_list(a0, a1)),
+        SYS_AX_FS_INFO => preemptible(nr, t0, || sys_fs_info(a0)),
+        SYS_AX_FS_READ => {
+            let a3 = frame.r10;
+            preemptible(nr, t0, || sys_fs_read(a0, a1, a2, a3))
+        }
+        SYS_AX_FS_WRITE => {
+            let a3 = frame.r10;
+            preemptible(nr, t0, || sys_fs_write(pid, a0, a1, a2, a3))
+        }
+        SYS_AX_FS_DELETE => preemptible(nr, t0, || sys_fs_delete(pid, a0, a1)),
+        SYS_AX_FS_INSTALL => {
+            let a3 = frame.r10;
+            preemptible(nr, t0, || sys_fs_install(pid, a0, a1, a2, a3))
+        }
         SYS_EXIT => {
             log_syscall(pid, "exit", nr, a0, 0);
             mark_ended(a0 as i32);
@@ -247,7 +274,7 @@ fn syscall_dispatch_inner(frame_rsp: u64) -> u64 {
             }
             Err(e) => e,
         },
-        SYS_AX_SPAWN_MODULE => sys_spawn_module(pid, a0, a1, a2),
+        SYS_AX_SPAWN_MODULE => preemptible(nr, t0, || sys_spawn_module(pid, a0, a1, a2)),
         SYS_AX_GET_EVIDENCE => sys_get_evidence(a0, a1, a2),
         SYS_WAIT4 => match sys_wait4(pid, a0 as i64, a1) {
             WaitOutcome::Done(r) => r,

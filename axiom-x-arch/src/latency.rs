@@ -204,6 +204,12 @@ pub fn report(w: &mut impl Write) {
             us(total) / 1000
         );
     }
+    let _ = writeln!(
+        w,
+        "fs lock (sleeping): {} acquisitions, {} had to wait; preemptible syscalls count one row per interrupts-off segment",
+        crate::fsys::FS_LOCK_ACQUIRES.load(Relaxed),
+        crate::fsys::FS_LOCK_WAITS.load(Relaxed)
+    );
     let g: [u64; 6] = core::array::from_fn(|i| GAPS[i].load(Relaxed));
     let ticks: u64 = g.iter().sum();
     let _ = writeln!(

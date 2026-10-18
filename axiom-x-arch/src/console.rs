@@ -174,8 +174,13 @@ fn tx_kick() {
     }
 }
 
-/// Output one byte on COM1 (and the VGA mirror). Call with interrupts off.
+/// Output one byte on COM1 (and the VGA mirror), from any context: the
+/// rings and the screen state are only touched with interrupts off.
 pub fn serial_out(b: u8) {
+    x86_64::instructions::interrupts::without_interrupts(|| serial_out_irq_off(b));
+}
+
+fn serial_out_irq_off(b: u8) {
     vga_putc(b);
     if !TX_ASYNC.load(Ordering::Relaxed) {
         tx_put_sync(b);

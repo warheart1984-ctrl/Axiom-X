@@ -59,6 +59,16 @@ name = "elf-shell"
 path = "src/bin/elf-shell.rs"
 test = false
 
+[[bin]]
+name = "elf-fsstress"
+path = "src/bin/elf-fsstress.rs"
+test = false
+
+[[bin]]
+name = "elf-fswriter"
+path = "src/bin/elf-fswriter.rs"
+test = false
+
 [profile.release]
 opt-level = "s"
 panic = "abort"

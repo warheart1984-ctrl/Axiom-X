@@ -252,6 +252,63 @@ pub fn start(pid: u32) -> ! {
 
 /// `waiting_for` marker: blocked in `read(0)` until console input arrives.
 pub const WAIT_CONSOLE: i64 = -2;
+/// `waiting_for` marker: blocked on the file-system lock (`fsys`).
+pub const WAIT_FS: i64 = -3;
+
+/// Software-interrupt vector kernel code uses to give up the CPU in the
+/// middle of a system call (DPL 0: ring 3 cannot raise it). It goes through
+/// the same trap-frame path as the timer, so the caller is saved exactly
+/// where it stands and resumed there later, as a preempted kernel thread is.
+pub const YIELD_VECTOR: u8 = 0x81;
+
+/// IDT entry for `YIELD_VECTOR`.
+#[unsafe(naked)]
+pub unsafe extern "C" fn yield_entry() -> ! {
+    trap_entry!(yield_dispatch);
+}
+
+extern "C" fn yield_dispatch(frame_rsp: u64) -> u64 {
+    // Nothing else can run (0): resume the caller, which re-checks why it
+    // blocked. In practice init, a kernel thread, is always runnable.
+    match schedule(frame_rsp) {
+        0 => frame_rsp,
+        rsp => rsp,
+    }
+}
+
+/// Block the current thread on `reason` and switch away; returns once it
+/// runs again (woken by `wake_all(reason)`, or resumed because nothing else
+/// could run, so callers re-check their condition in a loop).
+///
+/// Call with interrupts **off**: the check that decided to block and the
+/// block itself must be atomic, or a wake-up could slip in between and be
+/// lost. Returns with interrupts off.
+pub fn block_current_on(reason: i64) {
+    let pid = current_pid();
+    if let Some(mut g) = process_table().get_mut(pid) {
+        let p = g.get_mut();
+        p.state = ProcessState::Blocked;
+        p.waiting_for = reason;
+    }
+    unsafe { core::arch::asm!("int 0x81") };
+    if let Some(mut g) = process_table().get_mut(pid) {
+        let p = g.get_mut();
+        p.state = ProcessState::Running;
+        p.waiting_for = 0;
+    }
+}
+
+/// Make every thread blocked on `reason` runnable.
+pub fn wake_all(reason: i64) {
+    process_table().with_locked_mut(|procs| {
+        for p in procs.iter_mut() {
+            if p.state == ProcessState::Blocked && p.waiting_for == reason {
+                p.state = ProcessState::Runnable;
+                p.waiting_for = 0;
+            }
+        }
+    });
+}
 
 /// PIT period: the scheduler's time unit.
 pub const TICK_NS: u64 = 10_000_000;

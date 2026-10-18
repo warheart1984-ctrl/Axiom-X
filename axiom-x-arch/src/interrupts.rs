@@ -319,6 +319,11 @@ pub fn init_idt() -> &'static InterruptDescriptorTable {
                 .set_handler_addr(VirtAddr::new(crate::sched::timer_entry as *const () as u64));
         }
         idt[crate::apic::SPURIOUS_VECTOR].set_handler_fn(apic_spurious_handler);
+        // Kernel-only yield (blocking inside a preemptible system call).
+        unsafe {
+            idt[crate::sched::YIELD_VECTOR]
+                .set_handler_addr(VirtAddr::new(crate::sched::yield_entry as *const () as u64));
+        }
 
         // int 0x80 system calls. DPL 3 so ring 3 may invoke it; no IST: the
         // CPU switches to TSS.RSP0 on the privilege change.

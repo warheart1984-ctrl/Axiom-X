@@ -271,12 +271,9 @@ fn spawn_elf(name: &str, bytes: &[u8], parent: Option<u32>, rights: Rights) -> R
 /// on read; the syscall layer has already required READ).
 fn spawn_module_hook(name: &str, parent: u32, rights: Rights) -> i64 {
     if name.starts_with('/') {
-        return match axiom_x_arch::fsys::load_program(name) {
-            Ok(bytes) => match spawn_elf(name, bytes, Some(parent), rights) {
-                Ok(pid) => pid as i64,
-                Err(e) => e,
-            },
-            Err(e) => e,
+        return match axiom_x_arch::fsys::with_program(name, |bytes| spawn_elf(name, bytes, Some(parent), rights)) {
+            Ok(Ok(pid)) => pid as i64,
+            Ok(Err(e)) | Err(e) => e,
         };
     }
     if name == LEDGER_KEY_MODULE {
