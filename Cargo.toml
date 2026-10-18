@@ -12,6 +12,7 @@ members = [
     "axiom-x-capability",
     "axiom-x-capability-lineage",
     "axiom-x-ledger",
+    "axiom-x-ledger-tool",
 ]
 exclude = ["axiom-x-init", "axiom-x-kernel", "axiom-x-principal", "axiom-x-capability", "axiom-x-capability-lineage"]
 
@@ -20,7 +21,7 @@ exclude = ["axiom-x-init", "axiom-x-kernel", "axiom-x-principal", "axiom-x-capab
 # ABIs (x86-interrupt, naked asm) that the Windows/MSVC host codegen cannot
 # compile (upstream rustc/LLVM bugs). Build/check those with:
 #   cargo build --workspace --target x86_64-unknown-none
-default-members = ["axiom-x-math", "axiom-x-sys", "axiom-x-arch-traits", "axiom-x-ledger"]
+default-members = ["axiom-x-math", "axiom-x-sys", "axiom-x-arch-traits", "axiom-x-ledger", "axiom-x-ledger-tool"]
 
 [workspace.package]
 version = "0.1.0"
@@ -61,6 +62,11 @@ opt-level = 0
 debug = true
 overflow-checks = true
 lto = false
+
+# Signature arithmetic is unusably slow unoptimized (kernel debug builds
+# run it under QEMU TCG); optimize just the ledger crate.
+[profile.dev.package.axiom-x-ledger]
+opt-level = 3
 
 [profile.release]
 opt-level = 3

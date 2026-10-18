@@ -44,6 +44,19 @@ if [ -f "$USER_BIN/elf-hello" ]; then
 "
 fi
 
+# Ledger signing key: a 32-byte Ed25519 seed passed as the `ledger.key`
+# module (the kernel copies it, then wipes the module's memory). Generated
+# on first use; LEDGER_KEY=none boots without a key (unsigned checkpoints).
+# Publish the public key (`ledger-tool pubkey <key>`), never the seed.
+LEDGER_KEY="${LEDGER_KEY:-evidence/ledger.key}"
+rm -f evidence/iso/boot/ledger.key
+if [ "$LEDGER_KEY" != "none" ]; then
+    [ -f "$LEDGER_KEY" ] || head -c 32 /dev/urandom > "$LEDGER_KEY"
+    cp "$LEDGER_KEY" evidence/iso/boot/ledger.key
+    MODULES="$MODULES    module2 /boot/ledger.key ledger.key
+"
+fi
+
 cat > evidence/iso/boot/grub/grub.cfg <<EOF
 set timeout=0
 set default=0

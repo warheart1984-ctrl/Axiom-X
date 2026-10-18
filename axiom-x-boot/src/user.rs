@@ -267,6 +267,10 @@ fn spawn_elf(name: &str, bytes: &[u8], parent: Option<u32>, rights: Rights) -> R
 
 /// `AX_SPAWN_MODULE` hook: start the boot module called `name`.
 fn spawn_module_hook(name: &str, parent: u32, rights: Rights) -> i64 {
+    if name == LEDGER_KEY_MODULE {
+        // Kernel-only module: not a program, and not even acknowledged.
+        return -axiom_x_arch::syscall::ENOENT;
+    }
     match crate::boot_modules().iter().find(|m| m.name() == name) {
         None => -axiom_x_arch::syscall::ENOENT,
         Some(m) => match spawn_elf(name, m.bytes(), Some(parent), rights) {
@@ -287,22 +291,40 @@ fn release_process(p: &Process) -> u64 {
 /// report what was found on disk.
 pub fn attach_ledger_disk() {
     use axiom_x_arch::governance::PersistReport;
-    match governance::persist_init() {
+    let key = take_ledger_key();
+    match governance::signer_public_of(key.as_ref()) {
+        Some(pk) => {
+            let mut hex = [0u8; 64];
+            for (i, b) in pk.iter().enumerate() {
+                hex[2 * i] = b"0123456789abcdef"[(b >> 4) as usize];
+                hex[2 * i + 1] = b"0123456789abcdef"[(b & 15) as usize];
+            }
+            serial_print!(
+                "[ledger] signing key provisioned; public key {}\n",
+                core::str::from_utf8(&hex).unwrap_or("?")
+            );
+        }
+        None => serial_puts("[ledger] no signing key provisioned: checkpoints are unsigned\n"),
+    }
+    match governance::persist_init(key) {
         PersistReport::NoDisk(e) => {
             serial_print!("[ledger] no disk ({:?}): evidence is memory-only this boot\n", e)
         }
-        PersistReport::Formatted { sectors } => serial_print!(
-            "[ledger] blank disk ({} sectors) formatted: new chain from genesis (boot 1)\n",
-            sectors
+        PersistReport::Formatted { sectors, signed } => serial_print!(
+            "[ledger] blank disk ({} sectors) formatted: new chain from genesis (boot 1, {})\n",
+            sectors,
+            if signed { "signed checkpoint" } else { "unsigned" }
         ),
-        PersistReport::Resumed { records, boots, head } => {
+        PersistReport::Resumed { records, boots, head, was_signed, signed } => {
             let hex = short_hex(&head);
             serial_print!(
-                "[ledger] boot {}: verified {} persisted records from genesis; resuming chain at seq {} (head {}...)\n",
+                "[ledger] boot {}: verified {} persisted records from genesis{}; resuming chain at seq {} (head {}...){}\n",
                 boots,
                 records,
+                if was_signed { " and the checkpoint signature" } else { " (checkpoint was unsigned)" },
                 records,
-                core::str::from_utf8(&hex).unwrap_or("?")
+                core::str::from_utf8(&hex).unwrap_or("?"),
+                if signed { "; signing new checkpoints" } else { "" }
             )
         }
         PersistReport::Refused { reason, broken_at } => match broken_at {
@@ -316,6 +338,28 @@ pub fn attach_ledger_disk() {
             ),
         },
     }
+}
+
+/// Name of the boot module carrying the 32-byte ledger signing seed.
+pub const LEDGER_KEY_MODULE: &str = "ledger.key";
+
+/// Copy the signing seed out of its boot module and wipe the module's
+/// memory, so the secret exists only inside the kernel's key object.
+fn take_ledger_key() -> Option<[u8; 32]> {
+    let m = crate::boot_modules().iter().find(|m| m.name() == LEDGER_KEY_MODULE)?;
+    let bytes = m.bytes();
+    if bytes.len() != 32 {
+        serial_print!("[ledger] '{}' is {} bytes, expected 32: ignored\n", LEDGER_KEY_MODULE, bytes.len());
+        return None;
+    }
+    let seed: [u8; 32] = bytes.try_into().ok()?;
+    unsafe {
+        let p = m.start as *mut u8;
+        for i in 0..32 {
+            core::ptr::write_volatile(p.add(i), 0);
+        }
+    }
+    Some(seed)
 }
 
 /// Persist the ledger and report it.

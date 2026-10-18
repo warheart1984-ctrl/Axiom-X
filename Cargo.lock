@@ -122,6 +122,13 @@ name = "axiom-x-ledger"
 version = "0.1.0"
 
 [[package]]
+name = "axiom-x-ledger-tool"
+version = "0.1.0"
+dependencies = [
+ "axiom-x-ledger",
+]
+
+[[package]]
 name = "axiom-x-math"
 version = "0.1.0"
 dependencies = [

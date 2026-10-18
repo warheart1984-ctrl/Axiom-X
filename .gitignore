@@ -12,3 +12,5 @@ evidence/tmp/
 /axiom-x-capability/src/[0-9]*
 # Ledger disk images written by qemu-boot.sh
 evidence/*.img
+# Ledger signing seeds (secret)
+*.key

@@ -14,7 +14,9 @@
 
 #![no_std]
 
+pub mod ed25519;
 pub mod sha256;
+pub mod sha512;
 pub mod store;
 
 pub use sha256::{sha256, Sha256};

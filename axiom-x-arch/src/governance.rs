@@ -126,8 +126,30 @@ pub fn ledger_get(seq: u64) -> Option<(Record, Digest)> {
 // ============================================================================
 
 use crate::ata;
-use axiom_x_ledger::store::{self, Superblock, SuperblockError};
+use axiom_x_ledger::ed25519::Keypair;
+use axiom_x_ledger::store::{self, SignatureStatus, Superblock, SuperblockError};
 use axiom_x_ledger::verify_window;
+
+/// The ledger signing key for this boot (provisioned at boot; never leaves
+/// kernel memory; `Keypair` wipes itself on drop).
+static SIGNER: Mutex<Option<Keypair>> = Mutex::new(None);
+
+/// Public key a seed would yield (for reporting before `persist_init`).
+pub fn signer_public_of(seed: Option<&[u8; 32]>) -> Option<[u8; 32]> {
+    seed.map(|s| Keypair::from_seed(s).public)
+}
+
+/// Public half of the signing key, if one was provisioned.
+pub fn signer_public() -> Option<[u8; 32]> {
+    SIGNER.lock().as_ref().map(|k| k.public)
+}
+
+/// Sign `sb` with this boot's key, if any.
+fn sign_checkpoint(sb: &mut Superblock) {
+    if let Some(key) = SIGNER.lock().as_ref() {
+        sb.sign(key);
+    }
+}
 
 struct Persist {
     /// Records are being written to disk.
@@ -148,9 +170,10 @@ pub enum PersistReport {
     /// No usable disk: the ledger is memory-only for this boot.
     NoDisk(ata::AtaError),
     /// Blank disk: formatted, new chain from genesis.
-    Formatted { sectors: u64 },
-    /// Persisted chain verified from genesis and continued.
-    Resumed { records: u64, boots: u64, head: Digest },
+    Formatted { sectors: u64, signed: bool },
+    /// Persisted chain verified from genesis (and its checkpoint signature,
+    /// if it had one) and continued.
+    Resumed { records: u64, boots: u64, head: Digest, was_signed: bool, signed: bool },
     /// The disk holds something we must not continue or overwrite.
     Refused { reason: &'static str, broken_at: Option<u64> },
 }
@@ -164,16 +187,20 @@ fn read_slot(seq: u64, cache: &mut (u64, [u8; store::SECTOR])) -> Option<(Record
     Some(store::decode_slot(&cache.1[off..off + store::SLOT]))
 }
 
-/// Attach the disk ledger. Must run before the first record of this boot
-/// is appended. Appends this boot's BOOT record either way.
-pub fn persist_init() -> PersistReport {
+/// Attach the disk ledger with this boot's signing key (`None` = unsigned).
+/// Must run before the first record of this boot is appended. Appends the
+/// BOOT record either way; its `nr` field carries the first 8 bytes of the
+/// signer's public key (0 = unsigned).
+pub fn persist_init(key_seed: Option<[u8; 32]>) -> PersistReport {
+    *SIGNER.lock() = key_seed.map(|seed| Keypair::from_seed(&seed));
     let report = attach_disk();
     let (boot_no, resumed) = match report {
         PersistReport::Formatted { .. } => (1, 0),
         PersistReport::Resumed { records, boots, .. } => (boots, records as i64),
         _ => (0, -1),
     };
-    record(kind::BOOT, decision::ALLOW, 0, 0, 0, boot_no, resumed, Rights::NONE);
+    let key_id = signer_public().map_or(0, |p| u64::from_le_bytes(p[..8].try_into().unwrap()));
+    record(kind::BOOT, decision::ALLOW, 0, 0, key_id, boot_no, resumed, Rights::NONE);
     report
 }
 
@@ -189,12 +216,13 @@ fn attach_disk() -> PersistReport {
     }
     match Superblock::decode(&sb_buf) {
         Err(SuperblockError::Blank) => {
-            let sb = Superblock { total: 0, head: [0; 32], boots: 1 };
+            let mut sb = Superblock::unsigned(0, [0; 32], 1);
+            sign_checkpoint(&mut sb);
             if ata::write_sector(0, &sb.encode()).and_then(|_| ata::flush()).is_err() {
                 return PersistReport::Refused { reason: "cannot format", broken_at: None };
             }
             *PERSIST.lock() = Persist { enabled: true, persisted: 0, boots: 1, capacity };
-            PersistReport::Formatted { sectors }
+            PersistReport::Formatted { sectors, signed: sb.signature.is_some() }
         }
         Err(SuperblockError::Foreign) => PersistReport::Refused {
             reason: "disk holds something else; not formatting over it",
@@ -210,6 +238,34 @@ fn attach_disk() -> PersistReport {
                     broken_at: None,
                 };
             }
+            // Signed history must be continued by the same key: a missing
+            // key would silently strip signatures, a different one would
+            // let anyone take over the chain.
+            let was_signed = sb.signature.is_some();
+            match (was_signed, signer_public()) {
+                (true, None) => {
+                    return PersistReport::Refused {
+                        reason: "ledger is signed but no signing key is provisioned",
+                        broken_at: None,
+                    }
+                }
+                (true, Some(pk)) => match sb.signature_status(&pk) {
+                    SignatureStatus::Valid => {}
+                    SignatureStatus::WrongKey => {
+                        return PersistReport::Refused {
+                            reason: "checkpoint was signed by a different key",
+                            broken_at: None,
+                        }
+                    }
+                    _ => {
+                        return PersistReport::Refused {
+                            reason: "checkpoint signature does not verify",
+                            broken_at: None,
+                        }
+                    }
+                },
+                (false, _) => {}
+            }
             // Re-verify every persisted link from genesis before trusting it.
             let mut cache = (u64::MAX, [0u8; store::SECTOR]);
             match verify_window(0, sb.total, |seq| read_slot(seq, &mut cache)) {
@@ -221,12 +277,19 @@ fn attach_disk() -> PersistReport {
                 Ok(head) => {
                     LEDGER.lock().resume(sb.total, head);
                     let boots = sb.boots + 1;
-                    let sb2 = Superblock { total: sb.total, head, boots };
+                    let mut sb2 = Superblock::unsigned(sb.total, head, boots);
+                    sign_checkpoint(&mut sb2);
                     if ata::write_sector(0, &sb2.encode()).and_then(|_| ata::flush()).is_err() {
                         return PersistReport::Refused { reason: "cannot update superblock", broken_at: None };
                     }
                     *PERSIST.lock() = Persist { enabled: true, persisted: sb.total, boots, capacity };
-                    PersistReport::Resumed { records: sb.total, boots, head }
+                    PersistReport::Resumed {
+                        records: sb.total,
+                        boots,
+                        head,
+                        was_signed,
+                        signed: sb2.signature.is_some(),
+                    }
                 }
             }
         }
@@ -270,7 +333,8 @@ pub fn persist_flush() -> Result<u64, &'static str> {
     }
     let Some(head) = last_digest else { return Ok(0) };
     ata::write_sector(cur_sector, &sector_buf).map_err(|_| "write failed")?;
-    let sb = Superblock { total, head, boots };
+    let mut sb = Superblock::unsigned(total, head, boots);
+    sign_checkpoint(&mut sb);
     ata::write_sector(0, &sb.encode()).map_err(|_| "superblock write failed")?;
     ata::flush().map_err(|_| "cache flush failed")?;
     PERSIST.lock().persisted = total;
