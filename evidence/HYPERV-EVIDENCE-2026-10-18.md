@@ -91,3 +91,41 @@ chain.
   - turns compression off for `evidence\hyperv\` only;
   - stages a fresh ISO copy there;
   - refuses to start if either file is compressed, encrypted or sparse.
+
+## Interactive runs, 07:23 and 07:31 (`-Interactive -UseLedger -Cleanup`)
+
+Both runs continued the canonical `evidence/ledger.img`. After each run the script copied the ledger back.
+
+**07:23 run** (`hyperv-serial-2026-10-18-0723.log`, self-tests on, kernel before the PS/2 fix):
+
+- The full boot suite passed: lifecycle, ledger audit (including forged-record detection) and reclamation.
+- The new FS code behaved as designed with no slave disk: `[fs] no file-system disk`.
+- **Keyboard input did not reach the shell.** The kernel never set up the 8042 controller and relied on the BIOS to leave IRQ1 enabled with an empty output buffer. QEMU's BIOS does that; Hyper-V's does not.
+
+**07:31 run** (`hyperv-serial-2026-10-18-0731.log`, `axiom.selftest=off`, with the PS/2 fix):
+
+| Check | Observed | Tag |
+|-------|----------|-----|
+| PS/2 controller | `present true, config 0x75 -> 0x65, enable-scanning reply Some(250)` (0xFA = ACK) | enforced |
+| Keyboard → shell | `help`, `date`, `uptime`, `clocks`, `rm`, `ls` typed in vmconnect and executed; backspace works (`c^H ^Hls`) | enforced |
+| `date` / `uptime` | `2026-10-18 07:32:17`, `up 0h 00m 58.708s` | enforced |
+| FS without a disk | `ls` → `EIO`, `rm` (no name) → `EINVAL` | enforced |
+| Ledger after the run | `ledger-tool verify evidence/ledger.img`: **PASS**, 9610 records from genesis, 11 boots, latest and 53 archived checkpoints signed by `5b82c607…5f8a`; boot 11 = record #9464 | enforced |
+
+### Clock finding (open)
+
+```text
+TSC 60.627 s   RTC 60 s   PIT 21.770 s   PIT / TSC = 0.359
+```
+
+- The TSC and RTC agree, so `date`, `uptime` and `nanosleep` (TSC deadlines) are correct on Hyper-V.
+- About 64% of the 100 Hz PIT interrupts never arrive. That slows everything counted in ticks:
+  - scheduler time slices;
+  - the 5 s ledger persistence interval;
+  - the PIT column of `clocks`.
+- The cause has not been investigated yet. Candidates are Hyper-V's PIT emulation dropping ticks, and the cost of the debug-build timer path. Tag: `partial`. A fix will likely derive tick time from the TSC, or use the local APIC timer.
+
+### Other observations
+
+- **RTC zone differs by host.** QEMU's RTC is UTC and Hyper-V's is host local time. So BOOT record times are not monotonic across hosts: boot 9 (QEMU) shows 10:25, boot 10 (Hyper-V) 07:23.
+- **The ISO carries the kernel command line of the last `qemu-boot.sh` run.** That is why the 07:23 run did self-tests and the 07:31 run skipped them. Hyper-V runs should pin their own command line.

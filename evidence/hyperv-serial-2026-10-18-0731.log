@@ -1,0 +1,67 @@
+YAXIOM-X BOOT
+Parsing multiboot2 info...
+  Kernel: 0x100000 - 0x2d02e0
+  Memory regions: 6
+Initializing kernel frame allocator...
+  Frame allocator will be initialized by kernel
+Initializing boot allocator...
+  Boot modules: 10
+Setting up page tables...
+  PML4 at 0xad5000
+Initializing early heap...
+Initializing CPU features...
+Initializing architecture...
+  PS/2: present true, config 0x75 -> 0x65, enable-scanning reply Some(250), 0 stale bytes flushed
+Calibrating clock (RTC + TSC, 1-2 s)...
+  RTC: 2026-10-18 07:31:23 (no time zone)  TSC: 4013.729 MHz
+Initializing movie subsystem...
+Creating process table...
+  ProcessTable: 544792 bytes
+Initializing scheduler...
+Creating init process...
+  Init PID: 1 (kernel stack top 0xffff800008011000)
+Starting scheduler...
+PID 1 (init) running on its own stack; interrupts enabled
+[ledger] signing key provisioned; public key 5b82c607bffbf55da01a58b242584edb208cb412e030244ddfc7b7c579705f8a
+[ledger] boot 11: verified 9464 persisted records from genesis and the checkpoint signature; resuming chain at seq 9464 (head 50334a549be4e143...); signing new checkpoints; 49 checkpoints archived
+[fs] no file-system disk (primary slave): no files
+[kernel] self-tests skipped (axiom.selftest=off)
+[kernel] loaded ELF 'elf-shell' as pid 2 (parent 0): 49728 bytes, 3 segments, 12 pages, PML4 0xbee000
+
+Axiom-X shell (pid 2). Type 'help'.
+axiom> help
+commands:
+  help                  this list
+  echo <text>           print text
+  date                  wall clock (RTC-anchored, no time zone)
+  uptime                time since boot (TSC)
+  clocks                compare the PIT, TSC and RTC since boot
+  ps                    processes: pid, parent, state, rights, name
+  rights                this shell's rights
+  run <program> [+evidence] [+read] [-send]
+                        start a boot module (or a file: /path) and wait; it gets
+                        SEND by default, +evidence adds EVIDENCE, +read READ,
+                        -send removes SEND
+  ls                    files: size, version, SHA-256 prefix, name
+  cat <file>            print a file (hash-verified by the kernel)
+  write <file> <text>   create or replace a file with text
+  rm <file>             delete a file
+  install <module> <file>  copy a boot module into the file system
+  df                    file-system root hash, generation, space, mode
+  ledger                verify the newest evidence records' hash chain
+  exit                  leave (the kernel starts a new shell)
+axiom> date
+2026-10-18 07:32:17 (RTC time, no time zone)
+axiom> uptime
+up 0h 00m 58.708s
+axiom> clocks
+since the time origin:
+  TSC        60.627 s   (calibrated against the RTC at boot)
+  RTC        60     s   (read now, 1 s resolution)
+  PIT        21.770 s   (timer interrupts x 10 ms; starts ~1 s after the origin)
+  PIT / TSC = 0.359
+axiom> rm
+rm: -22 (EINVAL)
+axiom> c ls
+ls: -5 (EIO)
+axiom> c
