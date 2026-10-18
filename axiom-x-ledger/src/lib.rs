@@ -14,6 +14,7 @@
 
 #![no_std]
 
+pub mod civil;
 pub mod ed25519;
 pub mod sha256;
 pub mod sha512;
@@ -28,7 +29,10 @@ pub mod kind {
     pub const PROCESS_EXIT: u32 = 6;
     pub const CONTRACT_ENFORCE: u32 = 15;
     /// Axiom-X kernel boot (not in `EvidenceType`): `arg` = boot number,
-    /// `result` = records resumed from disk (-1 = none / not verified).
+    /// `result` = records resumed from disk (-1 = none / not verified),
+    /// `nr` = first 8 bytes of the signer key (0 = unsigned), `rights` =
+    /// UNIX time (seconds) of the boot per the RTC (0 = unknown; no time
+    /// zone: QEMU gives UTC, Hyper-V the host's local time).
     pub const BOOT: u32 = 100;
 }
 

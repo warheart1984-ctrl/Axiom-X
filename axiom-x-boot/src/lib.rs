@@ -895,6 +895,17 @@ fn ax_kernel_entry_continue(boot_info: BootInfo) -> ! {
     serial_puts("Initializing architecture...\n");
     axiom_x_arch::init_arch();
 
+    // Clock: RTC wall time + TSC calibrated against RTC second edges.
+    // Interrupts are still off, so nothing disturbs the calibration.
+    serial_puts("Calibrating clock (RTC + TSC, 1-2 s)...\n");
+    let (rtc_now, tsc_hz) = axiom_x_arch::clock::init();
+    serial_print!(
+        "  RTC: {} (no time zone)  TSC: {}.{:03} MHz\n",
+        rtc_now,
+        tsc_hz / 1_000_000,
+        tsc_hz / 1_000 % 1_000
+    );
+
     // Initialize movie subsystem (embedded boot movie)
     serial_puts("Initializing movie subsystem...\n");
     crate::movie::init_movie_subsystem();
@@ -944,11 +955,17 @@ extern "C" fn init_process() -> ! {
         unsafe { asm!("hlt") };
         wakes += 1;
         if wakes % 100 == 0 {
+            let ticks = axiom_x_arch::sched::TICKS.load(core::sync::atomic::Ordering::Relaxed);
+            let (pit_ms, tsc_ms, rtc_s) = axiom_x_arch::clock::timer_check(ticks);
             serial_print!(
-                "  init heartbeat: {} wakes, {} ticks, {} switches\n",
+                "  init heartbeat: {} wakes, {} switches | since boot: PIT {}.{:02}s, TSC {}.{:03}s, RTC {}s\n",
                 wakes,
-                axiom_x_arch::sched::TICKS.load(core::sync::atomic::Ordering::Relaxed),
-                axiom_x_arch::sched::SWITCHES.load(core::sync::atomic::Ordering::Relaxed)
+                axiom_x_arch::sched::SWITCHES.load(core::sync::atomic::Ordering::Relaxed),
+                pit_ms / 1000,
+                pit_ms % 1000 / 10,
+                tsc_ms / 1000,
+                tsc_ms % 1000,
+                rtc_s
             );
         }
     }

@@ -24,6 +24,7 @@ pub const SYS_NANOSLEEP: u64 = 35;
 pub const SYS_GETPID: u64 = 39;
 pub const SYS_EXIT: u64 = 60;
 pub const SYS_WAIT4: u64 = 61;
+pub const SYS_CLOCK_GETTIME: u64 = 228;
 /// Axiom-X: start a boot module (by name) as a child of the caller.
 /// Distinct from the declared `AxSpawn` (511), whose `SpawnRequest` ABI
 /// (caller-chosen entry/stack) is not implemented.
@@ -157,6 +158,7 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
             return switch_away(frame_rsp);
         }
         SYS_GETPID => pid as i64,
+        SYS_CLOCK_GETTIME => sys_clock_gettime(a0, a1),
         SYS_SCHED_YIELD => {
             frame.rax = 0;
             crate::governance::record_syscall(pid, nr, 0, 0, true);
@@ -205,6 +207,25 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
     }
     frame.rax = result as u64;
     frame_rsp
+}
+
+/// `clock_gettime(clockid, *timespec)`: 0 = CLOCK_REALTIME (RTC-anchored
+/// wall clock), 1 = CLOCK_MONOTONIC (TSC since boot). Both come from the
+/// TSC, not the PIT.
+fn sys_clock_gettime(clock: u64, ts: u64) -> i64 {
+    let ns = match clock {
+        0 => crate::clock::realtime_ns(),
+        1 => crate::clock::monotonic_ns(),
+        _ => return -EINVAL,
+    };
+    if !user_range_accessible(ts, 16, true) {
+        return -EFAULT;
+    }
+    unsafe {
+        (ts as *mut i64).write((ns / 1_000_000_000) as i64);
+        ((ts + 8) as *mut i64).write((ns % 1_000_000_000) as i64);
+    }
+    0
 }
 
 /// Copy a module name from user memory and ask the spawn hook to start it,
@@ -376,6 +397,7 @@ fn name_of(nr: u64) -> &'static str {
         SYS_SCHED_YIELD => "sched_yield",
         SYS_NANOSLEEP => "nanosleep",
         SYS_WAIT4 => "wait4",
+        SYS_CLOCK_GETTIME => "clock_gettime",
         SYS_AX_SPAWN_MODULE => "ax_spawn_module",
         SYS_AX_GET_EVIDENCE => "ax_get_evidence",
         _ => "unknown",

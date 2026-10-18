@@ -169,7 +169,16 @@ fn cmd_verify(image: &str, pubkey: &str, raw: bool) -> ExitCode {
     let (mut boots, mut denies) = (0, 0);
     for seq in 0..c.total {
         let (r, _) = slot(&img, seq).unwrap();
-        boots += (r.kind == axiom_x_ledger::kind::BOOT) as u32;
+        if r.kind == axiom_x_ledger::kind::BOOT {
+            boots += 1;
+            // `rights` carries the boot's RTC time on kernels that have a clock.
+            let when = if r.rights == 0 {
+                "time unknown (kernel without a clock)".to_string()
+            } else {
+                format!("{} (RTC, no time zone)", axiom_x_ledger::civil::DateTime::from_unix(r.rights))
+            };
+            println!("  BOOT record #{seq}: boot {}, {when}, resumed {} records", r.arg, r.result);
+        }
         denies += (r.decision == axiom_x_ledger::decision::DENY) as u32;
     }
     println!(

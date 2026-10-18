@@ -21,8 +21,8 @@ use core::sync::atomic::Ordering;
 use spin::Mutex;
 
 use crate::syscall::{
-    SYS_AX_GET_EVIDENCE, SYS_AX_SPAWN_MODULE, SYS_EXIT, SYS_GETPID, SYS_NANOSLEEP, SYS_SCHED_YIELD,
-    SYS_WAIT4, SYS_WRITE,
+    SYS_AX_GET_EVIDENCE, SYS_AX_SPAWN_MODULE, SYS_CLOCK_GETTIME, SYS_EXIT, SYS_GETPID, SYS_NANOSLEEP,
+    SYS_SCHED_YIELD, SYS_WAIT4, SYS_WRITE,
 };
 
 /// Records kept in memory; the chain itself is unbounded.
@@ -38,7 +38,7 @@ pub fn required_right(nr: u64) -> Option<Rights> {
         SYS_WRITE => Some(Rights::SEND),
         SYS_AX_SPAWN_MODULE => Some(Rights::SPAWN),
         SYS_AX_GET_EVIDENCE => Some(Rights::EVIDENCE),
-        SYS_EXIT | SYS_GETPID | SYS_SCHED_YIELD | SYS_NANOSLEEP | SYS_WAIT4 => None,
+        SYS_EXIT | SYS_GETPID | SYS_SCHED_YIELD | SYS_NANOSLEEP | SYS_WAIT4 | SYS_CLOCK_GETTIME => None,
         // Unknown calls need no right: they fail with -ENOSYS anyway.
         _ => None,
     }
@@ -293,7 +293,7 @@ pub fn persist_init(key_seed: Option<[u8; 32]>) -> PersistReport {
         _ => (0, -1),
     };
     let key_id = signer_public().map_or(0, |p| u64::from_le_bytes(p[..8].try_into().unwrap()));
-    record(kind::BOOT, decision::ALLOW, 0, 0, key_id, boot_no, resumed, Rights::NONE);
+    record(kind::BOOT, decision::ALLOW, 0, 0, key_id, boot_no, resumed, Rights::new(crate::clock::boot_unix()));
     report
 }
 
