@@ -73,15 +73,43 @@ pub fn enable_serial_rx() {
     outb(COM1 + 1, 0x01);
 }
 
-/// IRQ4 body: drain the UART receive buffer into the queue, then feed the
-/// transmitter from the output ring.
-pub fn on_serial_irq() {
+fn rx_drain() {
     while inb(COM1 + 5) & LSR_DATA_READY != 0 {
         let b = inb(COM1);
         // Terminals send CR for Enter; the shell expects LF.
         push(if b == b'\r' { b'\n' } else { b });
     }
-    tx_pump();
+}
+
+/// IRQ4 body. IRQ4 is edge-triggered at the 8259, so the handler must leave
+/// the UART with nothing pending: otherwise its interrupt line stays high,
+/// no new edge ever arrives and serial input stalls. So it loops on the
+/// interrupt-identification register until it reports "none pending",
+/// serving receive (drain into the input queue) and transmit-empty (next
+/// byte from the output ring, or switch that interrupt off when the ring
+/// is empty). Bounded: if it is still busy after that many rounds (an
+/// emulated UART can report transmit-empty again at once), it stops the
+/// transmit interrupt and leaves the rest to the tick fallback.
+pub fn on_serial_irq() {
+    for _ in 0..256 {
+        let iir = inb(COM1 + 2);
+        if iir & 0x01 != 0 {
+            return; // nothing pending: the line is low
+        }
+        match iir & 0x0E {
+            0x04 | 0x0C => rx_drain(),  // data available / character timeout
+            0x02 => tx_send_next(),     // transmit holding register empty
+            0x06 => {
+                inb(COM1 + 5);          // line status
+            }
+            _ => {
+                inb(COM1 + 6);          // modem status
+            }
+        }
+    }
+    TX_IRQ_ON.store(false, Ordering::Relaxed);
+    outb(COM1 + 1, IER_RX);
+    rx_drain();
 }
 
 // ----------------------------------------------------------------------------
@@ -109,23 +137,40 @@ static TX_TAIL: AtomicUsize = AtomicUsize::new(0);
 static TX_ASYNC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 /// Bytes written synchronously because the ring was full.
 pub static TX_OVERFLOW_SYNC: AtomicU32 = AtomicU32::new(0);
+/// THR-empty interrupt enabled (the drain is running). Tracked here so the
+/// write path touches the UART once per burst, not once per byte: every
+/// UART access is a host exit on an emulated port (~40 us on Hyper-V).
+static TX_IRQ_ON: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 fn tx_put_sync(b: u8) {
     while inb(COM1 + 5) & LSR_THR_EMPTY == 0 {}
     outb(COM1, b);
 }
 
-/// Send the next ring byte if the transmitter is free; switch the THRE
-/// interrupt off when the ring is empty (on while there is output).
-pub fn tx_pump() {
+/// The transmitter is empty: send the next ring byte, or switch the THRE
+/// interrupt off when there is nothing left.
+fn tx_send_next() {
     let head = TX_HEAD.load(Ordering::Relaxed);
     if head == TX_TAIL.load(Ordering::Acquire) {
-        outb(COM1 + 1, IER_RX);
+        if TX_IRQ_ON.swap(false, Ordering::Relaxed) {
+            outb(COM1 + 1, IER_RX);
+        }
         return;
     }
-    if inb(COM1 + 5) & LSR_THR_EMPTY != 0 {
-        outb(COM1, unsafe { (*core::ptr::addr_of!(TX))[head] });
-        TX_HEAD.store((head + 1) % TX_CAP, Ordering::Release);
+    outb(COM1, unsafe { (*core::ptr::addr_of!(TX))[head] });
+    TX_HEAD.store((head + 1) % TX_CAP, Ordering::Release);
+}
+
+/// Tick fallback for the transmitter: restart the THRE interrupt if output
+/// is waiting and it is off, else send a byte if the UART is free.
+fn tx_kick() {
+    if tx_pending() == 0 {
+        return;
+    }
+    if !TX_IRQ_ON.swap(true, Ordering::Relaxed) {
+        outb(COM1 + 1, IER_RX | IER_THRE);
+    } else if inb(COM1 + 5) & LSR_THR_EMPTY != 0 {
+        tx_send_next();
     }
 }
 
@@ -147,9 +192,12 @@ pub fn serial_out(b: u8) {
     }
     unsafe { (*core::ptr::addr_of_mut!(TX))[tail] = b };
     TX_TAIL.store(next, Ordering::Release);
-    // Start (or keep) the interrupt-driven drain.
-    outb(COM1 + 1, IER_RX | IER_THRE);
-    tx_pump();
+    // Start the interrupt-driven drain if it is not running: enabling the
+    // THR-empty interrupt while the register is empty raises IRQ4 at once
+    // (delivered when the caller turns interrupts back on).
+    if !TX_IRQ_ON.swap(true, Ordering::Relaxed) {
+        outb(COM1 + 1, IER_RX | IER_THRE);
+    }
 }
 
 /// Switch to buffered output (once interrupts will be on to drain it).
@@ -168,6 +216,7 @@ pub fn serial_sync() {
         tx_put_sync(unsafe { (*core::ptr::addr_of!(TX))[head] });
         TX_HEAD.store((head + 1) % TX_CAP, Ordering::Release);
     }
+    TX_IRQ_ON.store(false, Ordering::Relaxed);
     outb(COM1 + 1, IER_RX);
 }
 
@@ -305,12 +354,17 @@ pub fn on_keyboard_irq() {
     take_keyboard_byte();
 }
 
-/// Called on every timer tick (interrupts off): picks up a keyboard byte
-/// whose IRQ1 was lost or never raised, so input cannot stall for good, and
-/// nudges the serial transmitter the same way.
+/// Called on every timer tick (interrupts off). Fallbacks only, so they run
+/// every 10th tick (100 ms): pick up a keyboard byte whose IRQ1 was lost,
+/// and nudge the serial transmitter the same way. The cursor follows the
+/// text at the full tick rate, only when it moved.
 pub fn poll_keyboard() {
-    take_keyboard_byte();
-    tx_pump();
+    static N: AtomicU32 = AtomicU32::new(0);
+    if N.fetch_add(1, Ordering::Relaxed) % 10 == 0 {
+        take_keyboard_byte();
+        rx_drain();
+        tx_kick();
+    }
     vga_sync_cursor();
 }
 

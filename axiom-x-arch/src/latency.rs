@@ -159,7 +159,9 @@ pub fn reset() {
     }
     GAP_MAX.store(0, Relaxed);
     LOST.store(0, Relaxed);
-    LAST_TICK.store(0, Relaxed);
+    // Measure the first gap from the reset itself, so a long region right
+    // after it (e.g. printing this report) is not missed.
+    LAST_TICK.store(now(), Relaxed);
 }
 
 /// Writes into a byte buffer, truncating.

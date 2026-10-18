@@ -146,3 +146,56 @@ The Hyper-V run confirms the ranking. It moves the disk up, and adds a cheap ste
 - **What's left:** whole-file FS operations and spawn under one interrupts-off region (fix 2).
 - **Checks:** self-tests PASS (lifecycle, audit, reclamation); host tests: 66 pass.
 - **Hyper-V ISO** rebuilt: `evidence/axiom-x-hyperv.iso`, sha256 `985696a8b4081028298d300dc21e23464ffcc5882e1ac05cde186452ca88452c`; kernel sha256 `373fe4bc9fa7739944ec24260898fb839b26486085ff6b7ebd44e7217538f38b`.
+
+## Hyper-V re-measure after fixes 0 and 1 (`hyperv-serial-2026-10-18-0930.log`)
+
+The ISO had sha256 `985696a8…452c`. The workload was the same as before.
+
+| Measure | Hyper-V before | Hyper-V after |
+|---|---:|---:|
+| `ata command` average per sector | 11.8 ms | **2.4 ms** (string I/O is batched by Hyper-V) |
+| `sys ax_fs_install` max | 806 ms | **133 ms** |
+| `sys ax_spawn_module` max | 391 ms | **49 ms** |
+| `sys ax_fs_write` max | 221 ms | **42 ms** |
+| Self-tests: max tick gap / ticks lost | 371 ms / ~542 | **46 ms / ~64** |
+| Self-tests: `sys ax_get_evidence` max | 370 ms | **3.8 ms** |
+| `help`×3: max tick gap / ticks lost | 37 ms / ~55 of 765 | **22 ms / ~15 of 683** |
+| `sys write` max | 304 ms | 162 ms (see below) |
+
+**Remaining `sys write` cost.** The 162 ms writes were the shell printing the `lat` report itself, about 1 KB in one write. The tick-gap counter restarted at the first tick after a reset, so that gap was not counted. The cost came from the transmit path still touching the UART for every byte queued:
+- the interrupt-enable write;
+- the line-status read;
+- sometimes the data write.
+
+On Hyper-V's emulated COM port, each of those accesses is a host exit (roughly 40 µs).
+
+**Disks after the run.** `fs-verify` gives **PASS**:
+- 19295 records from genesis, 15 boots, 157 archived signed checkpoints;
+- 7 files, all matching their SHA-256;
+- the root `1ab9d255…` is the newest anchor (record #18033).
+
+## Serial burst fix (`latency-after2-qemu-2026-10-18.log`)
+
+- **Queueing a byte no longer touches the UART.** The THR-empty interrupt is enabled once per burst (tracked by `TX_IRQ_ON`) and switched off when the ring empties.
+- **IRQ4 loops on the interrupt-identification register until nothing is pending.** IRQ4 is edge-triggered at the 8259, and a UART left with something pending keeps its line high, so no new edge arrives.
+  - The first version of this fix showed the problem: serial input stalled after 14 bytes in QEMU, while keyboard input still worked.
+  - The loop is bounded. When the bound is reached, it stops the transmit interrupt and the tick fallback restarts it.
+- **The tick fallbacks run every 10th tick:** keyboard byte, receive drain and transmit kick. The cursor update still runs every tick, and only when the cursor moved.
+- **`lat reset` starts the gap clock at the reset**, so the first gap is no longer missed.
+
+### QEMU results
+
+| Measure | After fix 1 | After burst fix |
+|---|---:|---:|
+| Workload: `sys write` max | 20 ms | **7.0 ms** |
+| `help`×3: `sys write` max | 18 ms | **4.9 ms** |
+| `help`×3: max tick gap / ticks lost | 17 ms / 2 | 21 ms / 2 |
+| Self-tests: `sys write` max | 14 ms | 12 ms |
+
+- **Checks:**
+  - the full interactive session (install, write, run from `/path`, audit, `ledger`, `ps`, `lat`) arrived and ran intact;
+  - all 16 commands of the scripted-input harness (`fs-input-1.txt`) arrived intact;
+  - self-tests PASS;
+  - host tests: 66 pass.
+- **The largest remaining region is the whole-file FS operation:** `ax_fs_install` at about 330 ms in QEMU and 133 ms on Hyper-V. Fix 2 addresses it.
+- **Hyper-V ISO** rebuilt: sha256 `d411d47767955c267d15ff871de134f84cce79f9ca84ed1bf0471d3372dd0185`; kernel sha256 `6341bf73d66239c21f032b6569e73f8aca2b087b63b5f851a0ef3bed208f743c`.
