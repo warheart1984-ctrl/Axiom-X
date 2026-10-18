@@ -199,3 +199,32 @@ On Hyper-V's emulated COM port, each of those accesses is a host exit (roughly 4
   - host tests: 66 pass.
 - **The largest remaining region is the whole-file FS operation:** `ax_fs_install` at about 330 ms in QEMU and 133 ms on Hyper-V. Fix 2 addresses it.
 - **Hyper-V ISO** rebuilt: sha256 `d411d47767955c267d15ff871de134f84cce79f9ca84ed1bf0471d3372dd0185`; kernel sha256 `6341bf73d66239c21f032b6569e73f8aca2b087b63b5f851a0ef3bed208f743c`.
+
+## Hyper-V check of the serial burst fix (`hyperv-serial-2026-10-18-0945.log`)
+
+This run used the current build. Typed input echoed normally in vmconnect throughout.
+
+| Measure | Hyper-V 09:30 (fix 1) | Hyper-V 09:45 (burst fix) |
+|---|---:|---:|
+| `help`×3: `sys write` max | 162 ms | **3.7 ms** |
+| Workload: `sys write` max | 106 ms | **2.0 ms** |
+| Self-tests: `sys write` max | 26 ms | **1.4 ms** |
+| Self-tests: `kernel serial` max | 46 ms | **6.1 ms** |
+| Self-tests: `sys ax_spawn_module` max | 24 ms | **1.3 ms** (its cost was the trace line inside the call) |
+| Workload: `sys ax_fs_install` max | 133 ms | 136 ms (unchanged, as expected) |
+| Workload: `sys ax_fs_write` max | 42 ms | 45 ms |
+| Workload: `sys ax_spawn_module` max (from `/path`) | 49 ms | 29 ms |
+| `ata command` average (workload) | 2.4 ms | 2.3 ms |
+| Self-tests: max tick gap / ticks lost | 46 ms / ~64 | 39 ms / ~67 |
+| `help`×3: max tick gap / ticks lost | 22 ms / ~15 | 45 ms / ~19 |
+
+**Console output is no longer a latency source on Hyper-V:** every `write` stays under 4 ms. What remains:
+
+1. **Whole-file FS operations under one interrupts-off region:** install 136 ms, write 45 ms, spawn from a file 29 ms. Fix 2 addresses these.
+2. **Single ATA commands up to about 34 ms** (self-tests: ledger persistence, cache flushes). With interrupts on between commands, as in ledger persistence, these are the remaining kernel-side bound.
+3. **The `timer tick` region sometimes runs 42–62 ms, against an average of 77–124 µs.** In the `help` round, the 45 ms maximum gap equals the 45 ms maximum `timer tick`. The handler does a few port and MMIO accesses and a scheduler pass; this looks like the host descheduling the vCPU while the TSC runs. That is not a kernel cost, but it is not proven either. One way to check: the TSC deadline ↔ steal-time interface (Hyper-V enlightenments) is not used yet.
+
+**Disks after the run.** `fs-verify` gives **PASS**:
+- 22336 records from genesis, 16 boots, 190 archived signed checkpoints;
+- 7 files, all matching their SHA-256;
+- the root `d0e19342…` is the newest anchor (record #21126).
