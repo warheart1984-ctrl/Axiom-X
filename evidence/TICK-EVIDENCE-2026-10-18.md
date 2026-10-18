@@ -1,6 +1,6 @@
 # Scheduler tick: local APIC timer — evidence (2026-10-18)
 
-**Status: `partial`.** Verified in QEMU (TCG). **Not yet verified on Hyper-V**, where the problem was found.
+**Status: `partial`.** The tick rate is verified in QEMU (TCG) and on Hyper-V Gen 1, where the problem was found. It is single-CPU and xAPIC only.
 
 ## Problem
 
@@ -31,14 +31,29 @@ On Hyper-V Gen 1, `clocks` reported `PIT / TSC = 0.359` (`HYPERV-EVIDENCE-2026-1
 - **Under the `SHELL_INPUT` harness (stdin at EOF), the whole-run ratio drops to about 0.30.** This is the QEMU starvation artifact noted earlier, not a kernel effect: the 1 s tick check in the same run still measured about 98–100 Hz.
 - **TCG's APIC count rate varies from run to run** (8.8 M to 62.7 M counts/s). Calibrating against the TSC absorbs this.
 
-## Pending on Hyper-V
+## Hyper-V result, 08:00 run (`hyperv-serial-2026-10-18-0800.log`)
 
-The Hyper-V ISO is `evidence/axiom-x-hyperv.iso`, built with an empty command line, so the self-tests run first. Its sha256 is `59a50e8f5efa8167fd90fd82822d39908c127e0c9d5e6d1080b83b0953d2dc70`; it contains a kernel with sha256 `2c9d72dab2360024946319e228ff6b39d810e6234e3cad4aba89f92998aab3d9`.
+Run with `-Interactive -UseLedger -Cleanup`. The ISO was `evidence/axiom-x-hyperv.iso` (sha256 `59a50e8f…dc70`), built with self-tests on.
 
-To pass on Hyper-V:
+| Check | Before (PIT, 07:31) | After (APIC, 08:00) |
+|-------|---------------------|---------------------|
+| `Tick:` | PIT | `local APIC timer at 100 Hz (APIC base 0xfee00000, 12502900 counts/s, 125029 per tick)` |
+| 1 s tick check | (none) | 101 ticks in 1.004 s = **100.5 Hz** |
+| `clocks` at about 1 min | TICK/TSC **0.359** | 0.901 (includes self-tests and the ~1 s start offset) |
+| `clocks` at about 3.4 min | (none) | 0.954 |
+| Between the two `clocks` | (none) | 135.2 s of ticks in 137.9 s of TSC = **98.0%** |
 
-1. The `Tick:` line names the local APIC timer.
-2. The tick check reads about 100 Hz.
-3. `clocks` after a minute shows `TICK / TSC` close to 1, minus the roughly 1 s start offset.
+- **Boot suite on Hyper-V:** lifecycle, ledger audit and reclamation PASS in both rounds.
+- **File system on Hyper-V (IDE 0:1):**
+  - the blank disk was formatted;
+  - write, `install elf-hello /bin/hello` and `run /bin/hello` (exit 0), `ls` and `df` all worked;
+  - `cat hello.txt` → ENOENT was correct: the typed names were `hello.tx` and `hello.txt.`.
+  - `/bin/hello` has the same SHA-256 (`42e3d209…`) as in the QEMU runs.
+- **Off-machine:** `ledger-tool fs-verify evidence/fs.img evidence/ledger.img <key>` gives **PASS**:
+  - the ledger has 11768 records from genesis, 12 boots, and 88 archived checkpoints, all signed;
+  - the FS table matches its root, and all 3 files match their SHA-256;
+  - the root `70ff3ef5…` is the newest anchor (record #11598).
 
-If the APIC tick also loses interrupts there, the next suspect is long stretches with interrupts disabled. Examples are syscalls, which run with IF=0 under an interrupt gate, and polled PIO and serial output in the debug build.
+### Remaining gap
+
+About 2% of ticks are still lost while busy. The likely cause is long stretches with interrupts disabled: syscalls run under an interrupt gate, and the debug build does polled PIO and serial output. This is not yet investigated.
