@@ -112,3 +112,37 @@ The Hyper-V run confirms the ranking. It moves the disk up, and adds a cheap ste
   - The chain check and the forged-record check both passed. The boot-time audits PASS.
 - **The Hyper-V ISO is rebuilt with this kernel:** `evidence/axiom-x-hyperv.iso`, sha256 `2adcb20078a5bd1e943c10b686dd0386fb2a048c46940d6f6ff2a25bf5929063`. The kernel's sha256 is `e8ed8ee9003a08111dcd90bd3b885487c227cd9cf75da2910bd1a5a57d70c604`.
 - **Host tests:** 66 pass.
+
+## Fixes 0 and 1, plus the VGA mirror: QEMU re-measure (`latency-after-qemu-2026-10-18.log`)
+
+### Changes
+
+- **ATA:** each sector is now moved with one `rep insw` / `rep outsw` instead of 256 single port accesses.
+- **Serial transmit ring** (16 KiB, `console::serial_out`):
+  - output is queued, and the THR-empty interrupt (IRQ4) sends the next byte;
+  - the timer tick also sends one byte, in case an interrupt was missed;
+  - before the scheduler runs, and on panic (`serial_sync`), bytes are written directly;
+  - when the ring is full, the oldest byte is sent synchronously, and `TX_OVERFLOW_SYNC` counts these.
+- **VGA mirror.** Even with buffered serial output, `sys write` still peaked at 101 ms, and the cause was the VGA mirror:
+  - every newline scrolled by copying the whole screen through emulated video memory (2000 reads plus 2000 writes);
+  - every byte also set the hardware cursor (four port writes).
+
+  The screen now scrolls in hardware by moving the CRTC start address: one line of writes per newline, and a full copy only when the window reaches the end of the 32 KiB text memory. The cursor is set at most once per tick.
+  - The VGA screenshot after many screens of scrolling is correct: `vga-scroll-2026-10-18.png`.
+
+### Results (same QEMU workloads as before)
+
+| Measure | Before | After |
+|---|---:|---:|
+| Self-tests: `sys write` max | 45 ms | **14 ms** |
+| Self-tests: max tick gap / ticks lost | 47 ms / 86 | **29 ms / 6** |
+| Workload: `sys write` max | 71 ms | **20 ms** |
+| `help`×3: `sys write` max (QEMU, earlier build) | 101 ms | **18 ms** |
+| `help`×3: max tick gap | n/a | **17 ms** (2 of 604 ticks lost) |
+| Workload: `sys ax_fs_install` max | 336 ms | 335 ms (not addressed yet) |
+| Workload: `ata command` average | 4.7 ms | 4.7 ms |
+
+- **ATA in TCG.** `rep insw` makes no difference under TCG, which still emulates each word. Whether Hyper-V batches the string instruction is the open question for the next Hyper-V run.
+- **What's left:** whole-file FS operations and spawn under one interrupts-off region (fix 2).
+- **Checks:** self-tests PASS (lifecycle, audit, reclamation); host tests: 66 pass.
+- **Hyper-V ISO** rebuilt: `evidence/axiom-x-hyperv.iso`, sha256 `985696a8b4081028298d300dc21e23464ffcc5882e1ac05cde186452ca88452c`; kernel sha256 `373fe4bc9fa7739944ec24260898fb839b26486085ff6b7ebd44e7217538f38b`.

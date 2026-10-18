@@ -1,0 +1,509 @@
+YAXIOM-X BOOT
+Parsing multiboot2 info...
+  Kernel: 0x100000 - 0x2e45b0
+  Memory regions: 7
+Initializing kernel frame allocator...
+  Frame allocator will be initialized by kernel
+Initializing boot allocator...
+  Boot modules: 10
+Setting up page tables...
+  PML4 at 0xb37000
+Initializing early heap...
+Initializing CPU features...
+Initializing architecture...
+  PS/2: present true, config 0x71 -> 0x61, enable-scanning reply Some(250), 0 stale bytes flushed
+Calibrating clock (RTC + TSC, 1-2 s)...
+  RTC: 2026-10-18 13:24:44 (no time zone)  TSC: 4012.934 MHz
+  Tick: local APIC timer at 100 Hz (APIC base 0xfee00000, 62723120 counts/s, 627231 per tick); PIT IRQ0 masked
+Initializing movie subsystem...
+Creating process table...
+  ProcessTable: 544792 bytes
+Initializing scheduler...
+Creating init process...
+  Init PID: 1 (kernel stack top 0xffff800008011000)
+Starting scheduler...
+PID 1 (init) running on its own stack; interrupts enabled
+[clock] tick check (local APIC timer): 100 ticks in 1.001 s (TSC) = 99.8 Hz, expected 100 Hz
+[ledger] signing key provisioned; public key 5b82c607bffbf55da01a58b242584edb208cb412e030244ddfc7b7c579705f8a
+[ledger] blank disk (8192 sectors) formatted: new chain from genesis (boot 1, signed checkpoint)
+[fs] blank disk (32768 sectors) formatted as AXFS; root 9f1dcbc35c350d60.. anchored in ledger
+[kernel] === round 1: frames in use 283 ===
+hello from ring 3
+[syscall] pid=2 write(nr=1, a0=0x1) -> 18
+[kernel] spawned 'hello' as pid 2: 171 bytes embedded, PML4 0xc52000
+[syscall] pid=2 write(nr=1, a0=0x1) -> -14
+ring 3: kernel pointer refused with -EFAULT
+[syscall] pid=2 write(nr=1, a0=0x1) -> 44
+[syscall] pid=2 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 2 (parent 0) exited with code 0
+[kernel] spawned 'probe' as pid 3: 27 bytes embedded, PML4 0xc68000
+[kernel] spawned 'spin-A' as pid 4: 74 bytes embedded, PML4 0xc7e000
+[kernel] spawned 'spin-B' as pid 5: 74 bytes embedded, PML4 0xc94000
+[kernel] pid=3 killed: page fault in ring 3 at rip=0x800000000a (0xffff800000100000)
+[kernel] pid 3 (parent 0) killed by signal 11
+[kernel] loaded ELF 'elf-init' as pid 6 (parent 0): 20944 bytes, 3 segments, 5 pages, PML4 0xcaa000
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[syscall] pid=6 getpid(nr=39, a0=0x0) -> 6
+[init] user-space init running as pid 6
+[syscall] pid=6 write(nr=1, a0=0x1) -> 40
+[kernel] loaded ELF 'elf-hello' as pid 7 (parent 6): 16880 bytes, 3 segments, 5 pages, PML4 0xcc8000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034cf) -> 7
+[syscall] pid=7 getpid(nr=39, a0=0x0) -> 7
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[init] spawn elf-hello rights 0x80 -> pid 7
+[syscall] pid=6 write(nr=1, a0=0x1) -> 44
+[kernel] loaded ELF 'elf-fast' as pid 8 (parent 6): 16800 bytes, 3 segments, 4 pages, PML4 0xce6000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034e0) -> 8
+[init] spawn elf-fast rights 0x80 -> pid 8
+[syscall] pid=6 write(nr=1, a0=0x1) -> 43
+[elf-hello] pid 7: Rust ELF running in ring 3
+[syscall] pid=7 write(nr=1, a0=0x1) -> 46
+[elf-hello] .data initialized: true, .bss zeroed: true
+[syscall] pid=7 write(nr=1, a0=0x1) -> 55
+[syscall] pid=8 getpid(nr=39, a0=0x0) -> 8
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[kernel] loaded ELF 'elf-slow' as pid 9 (parent 6): 16800 bytes, 3 segments, 4 pages, PML4 0xd03000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034d8) -> 9
+[init] spawn elf-slow rights 0x80 -> pid 9
+[syscall] pid=6 write(nr=1, a0=0x1) -> 43
+[kernel] loaded ELF 'elf-crash' as pid 10 (parent 6): 16800 bytes, 3 segments, 4 pages, PML4 0xd20000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034e8) -> 10
+[elf-hello] back after sched_yield, exiting
+[syscall] pid=7 write(nr=1, a0=0x1) -> 44
+[syscall] pid=7 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 7 (parent 6) exited with code 0
+[syscall] pid=9 getpid(nr=39, a0=0x0) -> 9
+[syscall] pid=9 nanosleep(nr=35, a0=0x19) -> 0
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[init] spawn elf-crash rights 0x80 -> pid 10
+[syscall] pid=6 write(nr=1, a0=0x1) -> 45
+[kernel] loaded ELF 'elf-noperm' as pid 11 (parent 6): 16800 bytes, 3 segments, 4 pages, PML4 0xd3d000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034f1) -> 11
+[init] spawn elf-noperm rights 0x0 -> pid 11
+[syscall] pid=6 write(nr=1, a0=0x1) -> 45
+[syscall] pid=10 getpid(nr=39, a0=0x0) -> 10
+[elf-crash] pid 10 reading a kernel address
+[syscall] pid=10 write(nr=1, a0=0x1) -> 44
+[kernel] pid=10 killed: page fault in ring 3 at rip=0x800000119b (0xffff800000100000)
+[kernel] pid 10 (parent 6) killed by signal 11
+[syscall] pid=11 write(nr=1, a0=0x1) -> -1
+[kernel] ELF 'elf-bad-wx' rejected: segment is both writable and executable (W^X)
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034fb) -> -8
+[init] spawn elf-bad-wx rights 0x80 -> -8 (ENOEXEC)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 52
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003505) -> -2
+[init] spawn no-such-program rights 0x80 -> -2 (ENOENT)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 56
+[elf-fast] pid 8 woke 1/5 at ~100 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[syscall] pid=11 ax_spawn_module(nr=520, a0=0x8000002210) -> -1
+[syscall] pid=11 ax_spawn_module(nr=520, a0=0x8000002219) -> -1
+[syscall] pid=11 ax_fs_list(nr=530, a0=0x803ffff8c8) -> -1
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034cf) -> -1
+[init] spawn elf-hello rights 0x2000080 -> -1 (EPERM)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 54
+[syscall] pid=6 wait4(nr=61, a0=0x7) -> 7
+[syscall] pid=11 ax_fs_read(nr=531, a0=0x8000002223) -> -1
+[syscall] pid=11 ax_fs_write(nr=532, a0=0x800000223f) -> -1
+[syscall] pid=11 ax_fs_delete(nr=533, a0=0x8000002223) -> -1
+[syscall] pid=11 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 11 (parent 6) exited with code 0
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[init] reaped pid 7: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 40
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 10
+[init] reaped pid 10: killed by signal 11
+[syscall] pid=6 write(nr=1, a0=0x1) -> 42
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 11
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[init] reaped pid 11: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 41
+[elf-fast] pid 8 woke 2/5 at ~200 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[syscall] pid=5 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 5 (parent 0) exited with code 0
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[syscall] pid=4 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 4 (parent 0) exited with code 0
+[elf-slow] pid 9 woke 1/2 at ~250 ms (sleep -> 0)
+[syscall] pid=9 write(nr=1, a0=0x1) -> 50
+[syscall] pid=9 nanosleep(nr=35, a0=0x19) -> 0
+[elf-fast] pid 8 woke 3/5 at ~300 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[elf-fast] pid 8 woke 4/5 at ~400 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[elf-slow] pid 9 woke 2/2 at ~500 ms (sleep -> 0)
+[syscall] pid=9 write(nr=1, a0=0x1) -> 50
+[syscall] pid=9 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 9 (parent 6) exited with code 0
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 9
+[elf-fast] pid 8 woke 5/5 at ~500 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[init] reaped pid 9: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 40
+[syscall] pid=8 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 8 (parent 6) exited with code 0
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 8
+[init] reaped pid 8: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 40
+[kernel] loaded ELF 'elf-audit' as pid 12 (parent 6): 25040 bytes, 3 segments, 6 pages, PML4 0xd02000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003618) -> 12
+[syscall] pid=12 getpid(nr=39, a0=0x0) -> 12
+[audit] pid 12: verifying ledger records 0..105 (of 105)
+[syscall] pid=12 write(nr=1, a0=0x1) -> 57
+[audit] chain intact: 105 records, head 8185617139e57d94... (denies 10, faults 2, creates 11, reaps 5)
+[syscall] pid=12 write(nr=1, a0=0x1) -> 103
+[audit] forged record 52 detected: yes
+[syscall] pid=12 write(nr=1, a0=0x1) -> 39
+[audit] ledger audit: PASS
+[syscall] pid=12 write(nr=1, a0=0x1) -> 27
+[syscall] pid=12 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 12 (parent 6) exited with code 0
+[syscall] pid=6 wait4(nr=61, a0=0xc) -> 12
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> -10
+[init] all children reaped: 5/5 (exit 0: 4, signaled: 1); expected spawn failures: 3/3; audit ok: true; wait(-1) now -> Err(-10)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 129
+[init] process-lifecycle check: PASS
+[syscall] pid=6 write(nr=1, a0=0x1) -> 37
+[syscall] pid=6 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 6 (parent 0) exited with code 0
+[ledger] persisted 12 new records to disk
+[kernel] ledger: 281 records, head 769a7104f099b39e...
+[kernel] round 1: kernel started 5, kernel reaped 5 (118 frames); 1 process records left; frames in use 283 -> 283
+[kernel] === round 2: frames in use 283 ===
+[kernel] spawned 'hello' as pid 13: 171 bytes embedded, PML4 0xcc7000
+[kernel] spawned 'probe' as pid 14: 27 bytes embedded, PML4 0xcb6000
+hello from ring 3
+[syscall] pid=13 write(nr=1, a0=0x1) -> 18
+[syscall] pid=13 write(nr=1, a0=0x1) -> -14
+ring 3: kernel pointer refused with -EFAULT
+[syscall] pid=13 write(nr=1, a0=0x1) -> 44
+[syscall] pid=13 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 13 (parent 0) exited with code 0
+[kernel] pid=14 killed: page fault in ring 3 at rip=0x800000000a (0xffff800000100000)
+[kernel] pid 14 (parent 0) killed by signal 11
+[kernel] spawned 'spin-A' as pid 15: 74 bytes embedded, PML4 0xc9b000
+[kernel] spawned 'spin-B' as pid 16: 74 bytes embedded, PML4 0xc85000
+[kernel] loaded ELF 'elf-init' as pid 17 (parent 0): 20944 bytes, 3 segments, 5 pages, PML4 0xc6f000
+[syscall] pid=17 getpid(nr=39, a0=0x0) -> 17
+[init] user-space init running as pid 17
+[syscall] pid=17 write(nr=1, a0=0x1) -> 41
+[kernel] loaded ELF 'elf-hello' as pid 18 (parent 17): 16880 bytes, 3 segments, 5 pages, PML4 0xd1e000
+[syscall] pid=17 ax_spawn_module(nr=520, a0=0x80000034cf) -> 18
+[syscall] pid=18 getpid(nr=39, a0=0x0) -> 18
+[elf-hello] pid 18: Rust ELF running in ring 3
+[syscall] pid=18 write(nr=1, a0=0x1) -> 47
+[elf-hello] .data initialized: true, .bss zeroed: true
+[syscall] pid=18 write(nr=1, a0=0x1) -> 55
+[user A] tick
+[syscall] pid=15 write(nr=1, a0=0x1) -> 14
+[user B] tick
+[syscall] pid=16 write(nr=1, a0=0x1) -> 14
+[init] spawn elf-hello rights 0x80 -> pid 18
+[syscall] pid=17 write(nr=1, a0=0x1) -> 45
+[kernel] loaded ELF 'elf-fast' as pid 19 (parent 17): 16800 bytes, 3 segments, 4 pages, PML4 0xd01000
+[syscall] pid=17 ax_spawn_module(nr=520, a0=0x80000034e0) -> 19
+[init] spawn elf-fast rights 0x80 -> pid 19
+[syscall] pid=17 write(nr=1, a0=0x1) -> 44
+[elf-hello] back after sched_yield, exiting
+[syscall] pid=18 write(nr=1, a0=0x1) -> 44
+[syscall] pid=18 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 18 (parent 17) exited with code 0
+[syscall] pid=19 getpid(nr=39, a0=0x0) -> 19
+[syscall] pid=19 nanosleep(nr=35, a0=0xa) -> 0
+[kernel] loaded ELF 'elf-slow' as pid 20 (parent 17): 16800 bytes, 3 segments, 4 pages, PML4 0xd58000
+[syscall] pid=17 ax_spawn_module(nr=520, a0=0x80000034d8) -> 20
+[init] spawn elf-slow rights 0x80 -> pid 20
+[syscall] pid=17 write(nr=1, a0=0x1) -> 44
+[kernel] loaded ELF 'elf-crash' as pid 21 (parent 17): 16800 bytes, 3 segments, 4 pages, PML4 0xd3b000
+[syscall] pid=17 ax_spawn_module(nr=520, a0=0x80000034e8) -> 21
+[syscall] pid=20 getpid(nr=39, a0=0x0) -> 20
+[syscall] pid=20 nanosleep(nr=35, a0=0x19) -> 0
+[syscall] pid=21 getpid(nr=39, a0=0x0) -> 21
+[elf-crash] pid 21 reading a kernel address
+[syscall] pid=21 write(nr=1, a0=0x1) -> 44
+[kernel] pid=21 killed: page fault in ring 3 at rip=0x800000119b (0xffff800000100000)
+[kernel] pid 21 (parent 17) killed by signal 11
+[user B] tick
+[syscall] pid=16 write(nr=1, a0=0x1) -> 14
+[init] spawn elf-crash rights 0x80 -> pid 21
+[syscall] pid=17 write(nr=1, a0=0x1) -> 45
+[kernel] loaded ELF 'elf-noperm' as pid 22 (parent 17): 16800 bytes, 3 segments, 4 pages, PML4 0xce4000
+[syscall] pid=17 ax_spawn_module(nr=520, a0=0x80000034f1) -> 22
+[init] spawn elf-noperm rights 0x0 -> pid 22
+[syscall] pid=17 write(nr=1, a0=0x1) -> 45
+[syscall] pid=22 write(nr=1, a0=0x1) -> -1
+[syscall] pid=22 ax_spawn_module(nr=520, a0=0x8000002210) -> -1
+[syscall] pid=22 ax_spawn_module(nr=520, a0=0x8000002219) -> -1
+[syscall] pid=22 ax_fs_list(nr=530, a0=0x803ffff8c8) -> -1
+[syscall] pid=22 ax_fs_read(nr=531, a0=0x8000002223) -> -1
+[user A] tick
+[syscall] pid=15 write(nr=1, a0=0x1) -> 14
+[kernel] ELF 'elf-bad-wx' rejected: segment is both writable and executable (W^X)
+[syscall] pid=17 ax_spawn_module(nr=520, a0=0x80000034fb) -> -8
+[init] spawn elf-bad-wx rights 0x80 -> -8 (ENOEXEC)
+[syscall] pid=17 write(nr=1, a0=0x1) -> 52
+[syscall] pid=17 ax_spawn_module(nr=520, a0=0x8000003505) -> -2
+[init] spawn no-such-program rights 0x80 -> -2 (ENOENT)
+[syscall] pid=17 write(nr=1, a0=0x1) -> 56
+[elf-fast] pid 19 woke 1/5 at ~100 ms (sleep -> 0)
+[syscall] pid=19 write(nr=1, a0=0x1) -> 51
+[syscall] pid=19 nanosleep(nr=35, a0=0xa) -> 0
+[syscall] pid=22 ax_fs_write(nr=532, a0=0x800000223f) -> -1
+[user A] tick
+[syscall] pid=15 write(nr=1, a0=0x1) -> 14
+[syscall] pid=17 ax_spawn_module(nr=520, a0=0x80000034cf) -> -1
+[init] spawn elf-hello rights 0x2000080 -> -1 (EPERM)
+[syscall] pid=17 write(nr=1, a0=0x1) -> 54
+[syscall] pid=17 wait4(nr=61, a0=0x12) -> 18
+[init] reaped pid 18: exited with code 0
+[syscall] pid=17 write(nr=1, a0=0x1) -> 41
+[syscall] pid=17 wait4(nr=61, a0=0xffffffffffffffff) -> 21
+[syscall] pid=22 ax_fs_delete(nr=533, a0=0x8000002223) -> -1
+[syscall] pid=22 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 22 (parent 17) exited with code 0
+[user B] tick
+[syscall] pid=16 write(nr=1, a0=0x1) -> 14
+[init] reaped pid 21: killed by signal 11
+[syscall] pid=17 write(nr=1, a0=0x1) -> 42
+[syscall] pid=17 wait4(nr=61, a0=0xffffffffffffffff) -> 22
+[init] reaped pid 22: exited with code 0
+[syscall] pid=17 write(nr=1, a0=0x1) -> 41
+[user A] tick
+[syscall] pid=15 write(nr=1, a0=0x1) -> 14
+[elf-fast] pid 19 woke 2/5 at ~200 ms (sleep -> 0)
+[syscall] pid=19 write(nr=1, a0=0x1) -> 51
+[syscall] pid=19 nanosleep(nr=35, a0=0xa) -> 0
+[user B] tick
+[syscall] pid=16 write(nr=1, a0=0x1) -> 14
+[user A] tick
+[syscall] pid=15 write(nr=1, a0=0x1) -> 14
+[syscall] pid=15 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 15 (parent 0) exited with code 0
+[user B] tick
+[syscall] pid=16 write(nr=1, a0=0x1) -> 14
+[elf-slow] pid 20 woke 1/2 at ~250 ms (sleep -> 0)
+[syscall] pid=20 write(nr=1, a0=0x1) -> 51
+[syscall] pid=20 nanosleep(nr=35, a0=0x19) -> 0
+[syscall] pid=16 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 16 (parent 0) exited with code 0
+[elf-fast] pid 19 woke 3/5 at ~300 ms (sleep -> 0)
+[syscall] pid=19 write(nr=1, a0=0x1) -> 51
+[syscall] pid=19 nanosleep(nr=35, a0=0xa) -> 0
+[elf-fast] pid 19 woke 4/5 at ~400 ms (sleep -> 0)
+[syscall] pid=19 write(nr=1, a0=0x1) -> 51
+[syscall] pid=19 nanosleep(nr=35, a0=0xa) -> 0
+[elf-fast] pid 19 woke 5/5 at ~500 ms (sleep -> 0)
+[syscall] pid=19 write(nr=1, a0=0x1) -> 51
+[syscall] pid=19 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 19 (parent 17) exited with code 0
+[elf-slow] pid 20 woke 2/2 at ~500 ms (sleep -> 0)
+[syscall] pid=20 write(nr=1, a0=0x1) -> 51
+[syscall] pid=20 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 20 (parent 17) exited with code 0
+[syscall] pid=17 wait4(nr=61, a0=0xffffffffffffffff) -> 19
+[init] reaped pid 19: exited with code 0
+[syscall] pid=17 write(nr=1, a0=0x1) -> 41
+[syscall] pid=17 wait4(nr=61, a0=0xffffffffffffffff) -> 20
+[init] reaped pid 20: exited with code 0
+[syscall] pid=17 write(nr=1, a0=0x1) -> 41
+[kernel] loaded ELF 'elf-audit' as pid 23 (parent 17): 25040 bytes, 3 segments, 6 pages, PML4 0xd3c000
+[syscall] pid=17 ax_spawn_module(nr=520, a0=0x8000003618) -> 23
+[syscall] pid=23 getpid(nr=39, a0=0x0) -> 23
+[audit] pid 23: verifying ledger records 0..383 (of 383)
+[syscall] pid=23 write(nr=1, a0=0x1) -> 57
+[audit] chain intact: 383 records, head 206248a0e8ed8e1b... (denies 20, faults 4, creates 22, reaps 16)
+[syscall] pid=23 write(nr=1, a0=0x1) -> 104
+[audit] forged record 191 detected: yes
+[syscall] pid=23 write(nr=1, a0=0x1) -> 40
+[audit] ledger audit: PASS
+[syscall] pid=23 write(nr=1, a0=0x1) -> 27
+[syscall] pid=23 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 23 (parent 17) exited with code 0
+[syscall] pid=17 wait4(nr=61, a0=0x17) -> 23
+[syscall] pid=17 wait4(nr=61, a0=0xffffffffffffffff) -> -10
+[init] all children reaped: 5/5 (exit 0: 4, signaled: 1); expected spawn failures: 3/3; audit ok: true; wait(-1) now -> Err(-10)
+[syscall] pid=17 write(nr=1, a0=0x1) -> 129
+[init] process-lifecycle check: PASS
+[syscall] pid=17 write(nr=1, a0=0x1) -> 37
+[syscall] pid=17 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 17 (parent 0) exited with code 0
+[ledger] persisted 345 new records to disk
+[kernel] ledger: 976 records, head b31d6fdb3e1e263a...
+[kernel] round 2: kernel started 5, kernel reaped 5 (118 frames); 1 process records left; frames in use 283 -> 283
+[kernel] reclamation check: PASS (frames in use after each round: 283)
+[latency] after the self-tests:
+[latency] interrupts-off regions (outermost only), worst first:
+[latency]   region                  count     avg us     max us   total ms
+[latency]   sys ax_spawn_module        22       4940      24030        108
+[latency]   ata command               308       4870      22028       1500
+[latency]   sys wait4                  19       3175      14839         60
+[latency]   sys write                  90       2449      14048        220
+[latency]   sys exit                   18       3357       8418         60
+[latency]   kernel serial              24       2532       6130         60
+[latency]   sys nanosleep              14       1442       4044         20
+[latency]   timer tick                468        167       3925         78
+[latency]   sys ax_fs_write             2       2289       3264          4
+[latency]   allocator                 176         62       2615         11
+[latency]   sys getpid                 12       1231       2308         14
+[latency]   sys ax_fs_read              2       1830       2274          3
+[latency]   sys ax_fs_delete            2       1628       1834          3
+[latency]   sys ax_fs_list              2       1576       1807          3
+[latency]   sys ax_get_evidence       735         63       1191         46
+[latency]   ledger append              22         68        854          1
+[latency]   sys sched_yield             2        125        169          0
+[latency] tick gaps (468 ticks): <15ms 463, 15-25 4, 25-50 1, 50-100 0, 100-500 0, >=500 0; max 29 ms; ~6 ticks lost
+[kernel] loaded ELF 'elf-shell' as pid 24 (parent 0): 49728 bytes, 3 segments, 12 pages, PML4 0xc53000
+
+Axiom-X shell (pid 24). Type 'help'.
+axiom> lat reset
+interrupts-off regions (outermost only), worst first:
+  region                  count     avg us     max us   total ms
+  ata command                 7       4509      10554         31
+  allocator                  22        180       3917          3
+  kernel serial               1       1446       1446          1
+  timer tick               3285        139       1052        459
+  sys write                  13        202        656          2
+  sys read                    2        571        596          1
+  ledger append               1         36         36          0
+  sys getpid                  1         28         28          0
+tick gaps (3284 ticks): <15ms 3284, 15-25 0, 25-50 0, 50-100 0, 100-500 0, >=500 0; max 14 ms; ~0 ticks lost
+axiom> install elf-hello /bin/h
+installed elf-hello as /bin/h (16880 bytes)
+axiom> install elf-audit /bin/audit
+installed elf-audit as /bin/audit (25040 bytes)
+axiom> write a.txt some text
+wrote 10 bytes to a.txt
+axiom> run /bin/h
+[kernel] loaded ELF '/bin/h' as pid 25 (parent 24): 16880 bytes, 3 segments, 5 pages, PML4 0xc77000
+[elf-hello] pid 25: Rust ELF running in ring 3
+[elf-hello] .data initialized: true, .bss zeroed: true
+[elf-hello] back after sched_yield, exiting
+[pid 25 '/bin/h' exited with code 0]
+axiom> run elf-audit +evidence
+[kernel] loaded ELF 'elf-audit' as pid 26 (parent 24): 25040 bytes, 3 segments, 6 pages, PML4 0xc95000
+[audit] pid 26: verifying ledger records 747..1147 (of 1147)
+[audit] chain intact: 400 records, head d7a8baca1aa47880... (denies 0, faults 0, creates 3, reaps 7)
+[audit] forged record 947 detected: yes
+[audit] ledger audit: FAIL
+[pid 26 'elf-audit' exited with code 1]
+axiom> ledger
+ledger: 1768 records; newest 200 verified; head 37fab1c815d7a764...
+axiom> ps
+  PID PARENT STATE    RIGHTS NAME
+    1      0 ready    all    kernel-init
+   24      0 running  SRPDErw elf-shell
+axiom> lat reset
+interrupts-off regions (outermost only), worst first:
+  region                  count     avg us     max us   total ms
+  sys ax_fs_install           2     333440     335416        666
+  sys ax_fs_write             1      77393      77393         77
+  sys ax_spawn_module         2      21418      38605         42
+  sys write                 165        376      19613         62
+  ata command               234       4670      13184       1092
+  sys ax_latency              1      12236      12236         12
+  timer tick               1931        143       1915        276
+  sys ax_proc_list            1       1512       1512          1
+  sys wait4                   4        790       1432          3
+  sys read                   18        243        906          4
+  sys ax_get_evidence       803         59        836         48
+  sys exit                    2        161        172          0
+  sys sched_yield             1         74         74          0
+  sys getpid                  2         39         54          0
+tick gaps (1930 ticks): <15ms 1924, 15-25 2, 25-50 1, 50-100 1, 100-500 2, >=500 0; max 342 ms; ~78 ticks lost
+axiom> help
+commands:
+  help                  this list
+  echo <text>           print text
+  date                  wall clock (RTC-anchored, no time zone)
+  uptime                time since boot (TSC)
+  clocks                compare the PIT, TSC and RTC since boot
+  ps                    processes: pid, parent, state, rights, name
+  rights                this shell's rights
+  run <program> [+evidence] [+read] [-send]
+                        start a boot module (or a file: /path) and wait; it gets
+                        SEND by default, +evidence adds EVIDENCE, +read READ,
+                        -send removes SEND
+  ls                    files: size, version, SHA-256 prefix, name
+  cat <file>            print a file (hash-verified by the kernel)
+  write <file> <text>   create or replace a file with text
+  rm <file>             delete a file
+  install <module> <file>  copy a boot module into the file system
+  df                    file-system root hash, generation, space, mode
+  ledger                verify the newest evidence records' hash chain
+  lat [reset]           kernel interrupts-off times and tick gaps (reset: clear)
+  exit                  leave (the kernel starts a new shell)
+axiom> help
+commands:
+  help                  this list
+  echo <text>           print text
+  date                  wall clock (RTC-anchored, no time zone)
+  uptime                time since boot (TSC)
+  clocks                compare the PIT, TSC and RTC since boot
+  ps                    processes: pid, parent, state, rights, name
+  rights                this shell's rights
+  run <program> [+evidence] [+read] [-send]
+                        start a boot module (or a file: /path) and wait; it gets
+                        SEND by default, +evidence adds EVIDENCE, +read READ,
+                        -send removes SEND
+  ls                    files: size, version, SHA-256 prefix, name
+  cat <file>            print a file (hash-verified by the kernel)
+  write <file> <text>   create or replace a file with text
+  rm <file>             delete a file
+  install <module> <file>  copy a boot module into the file system
+  df                    file-system root hash, generation, space, mode
+  ledger                verify the newest evidence records' hash chain
+  lat [reset]           kernel interrupts-off times and tick gaps (reset: clear)
+  exit                  leave (the kernel starts a new shell)
+axiom> help
+commands:
+  help                  this list
+  echo <text>           print text
+  date                  wall clock (RTC-anchored, no time zone)
+  uptime                time since boot (TSC)
+  clocks                compare the PIT, TSC and RTC since boot
+  ps                    processes: pid, parent, state, rights, name
+  rights                this shell's rights
+  run <program> [+evidence] [+read] [-send]
+                        start a boot module (or a file: /path) and wait; it gets
+                        SEND by default, +evidence adds EVIDENCE, +read READ,
+                        -send removes SEND
+  ls                    files: size, version, SHA-256 prefix, name
+  cat <file>            print a file (hash-verified by the kernel)
+  write <file> <text>   create or replace a file with text
+  rm <file>             delete a file
+  install <module> <file>  copy a boot module into the file system
+  df                    file-system root hash, generation, space, mode
+  ledger                verify the newest evidence records' hash chain
+  lat [reset]           kernel interrupts-off times and tick gaps (reset: clear)
+  exit                  leave (the kernel starts a new shell)
+axiom> lat
+interrupts-off regions (outermost only), worst first:
+  region                  count     avg us     max us   total ms
+  sys write                  87       1870      18309        162
+  ata command                99       4954       8767        490
+  sys ax_latency              1       1602       1602          1
+  timer tick                605        147        872         89
+  sys read                    9        216        553          1
+tick gaps (604 ticks): <15ms 602, 15-25 2, 25-50 0, 50-100 0, 100-500 0, >=500 0; max 17 ms; ~2 ticks lost
+axiom> echo screen ok
+screen ok
+axiom> 

@@ -582,10 +582,9 @@ pub fn init_serial() {
 
 /// Write byte to serial
 pub fn serial_putc(c: u8) {
-    while inb(COM1 + 5) & 0x20 == 0 {} // Wait for THR empty
-    outb(COM1, c);
-    // Mirror to the VGA text screen (reached via the boot identity map).
-    axiom_x_arch::console::vga_putc(c);
+    // Buffered once the scheduler runs (see `console::serial_out`); also
+    // mirrored to the VGA text screen.
+    axiom_x_arch::console::serial_out(c);
 }
 
 /// Write string to serial
@@ -1034,6 +1033,9 @@ fn print_latency_report() {
 extern "C" fn init_process() -> ! {
     log::info!("Init process started");
     serial_puts("PID 1 (init) running on its own stack; interrupts enabled\n");
+    // Interrupts are on from here: console output can be buffered and
+    // drained by the UART's transmit interrupt.
+    axiom_x_arch::console::enable_async_tx();
     check_tick_rate(1000);
 
     // Start the ring-3 programs as concurrent processes, each in its own
@@ -1109,6 +1111,10 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     use core::fmt::Write;
     use core::sync::atomic::{AtomicBool, Ordering};
     static PANICKING: AtomicBool = AtomicBool::new(false);
+    // Flush buffered output and write the rest directly: interrupts are
+    // about to stop for good.
+    x86_64::instructions::interrupts::disable();
+    axiom_x_arch::console::serial_sync();
     if PANICKING.swap(true, Ordering::SeqCst) {
         serial_puts("\nKERNEL PANIC (nested)\n");
     } else {

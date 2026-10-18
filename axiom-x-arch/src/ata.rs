@@ -13,7 +13,7 @@
 
 use spin::Mutex;
 
-use crate::{inb, inw, outb, outw};
+use crate::{inb, inw, outb};
 
 const DATA: u16 = 0x1F0;
 const SECTOR_COUNT: u16 = 0x1F2;
@@ -169,8 +169,16 @@ pub fn read_sector_on(drive: Drive, lba: u64, buf: &mut [u8; SECTOR_SIZE]) -> Re
     with_ports(|| {
         select(drive, lba, CMD_READ)?;
         wait_drq()?;
-        for chunk in buf.chunks_exact_mut(2) {
-            chunk.copy_from_slice(&inw(DATA).to_le_bytes());
+        // One string instruction for the whole sector: an emulated disk can
+        // serve it in one exit instead of 256 (`cld` holds per the ABI).
+        unsafe {
+            core::arch::asm!(
+                "rep insw",
+                in("dx") DATA,
+                inout("rdi") buf.as_mut_ptr() => _,
+                inout("rcx") SECTOR_SIZE / 2 => _,
+                options(nostack, preserves_flags)
+            );
         }
         Ok(())
     })
@@ -180,8 +188,14 @@ pub fn write_sector_on(drive: Drive, lba: u64, buf: &[u8; SECTOR_SIZE]) -> Resul
     with_ports(|| {
         select(drive, lba, CMD_WRITE)?;
         wait_drq()?;
-        for chunk in buf.chunks_exact(2) {
-            outw(DATA, u16::from_le_bytes([chunk[0], chunk[1]]));
+        unsafe {
+            core::arch::asm!(
+                "rep outsw",
+                in("dx") DATA,
+                inout("rsi") buf.as_ptr() => _,
+                inout("rcx") SECTOR_SIZE / 2 => _,
+                options(nostack, preserves_flags, readonly)
+            );
         }
         settle();
         let s = wait_not_busy()?;

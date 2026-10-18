@@ -73,13 +73,107 @@ pub fn enable_serial_rx() {
     outb(COM1 + 1, 0x01);
 }
 
-/// IRQ4 body: drain the UART receive FIFO into the queue.
+/// IRQ4 body: drain the UART receive buffer into the queue, then feed the
+/// transmitter from the output ring.
 pub fn on_serial_irq() {
-    while inb(COM1 + 5) & 0x01 != 0 {
+    while inb(COM1 + 5) & LSR_DATA_READY != 0 {
         let b = inb(COM1);
         // Terminals send CR for Enter; the shell expects LF.
         push(if b == b'\r' { b'\n' } else { b });
     }
+    tx_pump();
+}
+
+// ----------------------------------------------------------------------------
+// Serial transmit (COM1): ring buffer drained by the THR-empty interrupt
+// ----------------------------------------------------------------------------
+//
+// Writing a byte used to mean waiting for the UART, with interrupts off: at
+// 115200 baud about 87 us per byte (far more on an emulated port), so one
+// console `write` could hold off the timer for hundreds of milliseconds.
+// Now output goes into a ring and returns; IRQ4 ("transmit holding register
+// empty") sends the next byte, and the timer tick sends one too in case an
+// interrupt was missed. Before `enable_async_tx` (early boot, interrupts
+// still off) and after `serial_sync` (panic) every byte is written directly.
+// Callers run with interrupts off (single CPU), so the ring needs no lock.
+
+const LSR_DATA_READY: u8 = 0x01;
+const LSR_THR_EMPTY: u8 = 0x20;
+const IER_RX: u8 = 0x01;
+const IER_THRE: u8 = 0x02;
+const TX_CAP: usize = 16 * 1024;
+
+static mut TX: [u8; TX_CAP] = [0; TX_CAP];
+static TX_HEAD: AtomicUsize = AtomicUsize::new(0);
+static TX_TAIL: AtomicUsize = AtomicUsize::new(0);
+static TX_ASYNC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// Bytes written synchronously because the ring was full.
+pub static TX_OVERFLOW_SYNC: AtomicU32 = AtomicU32::new(0);
+
+fn tx_put_sync(b: u8) {
+    while inb(COM1 + 5) & LSR_THR_EMPTY == 0 {}
+    outb(COM1, b);
+}
+
+/// Send the next ring byte if the transmitter is free; switch the THRE
+/// interrupt off when the ring is empty (on while there is output).
+pub fn tx_pump() {
+    let head = TX_HEAD.load(Ordering::Relaxed);
+    if head == TX_TAIL.load(Ordering::Acquire) {
+        outb(COM1 + 1, IER_RX);
+        return;
+    }
+    if inb(COM1 + 5) & LSR_THR_EMPTY != 0 {
+        outb(COM1, unsafe { (*core::ptr::addr_of!(TX))[head] });
+        TX_HEAD.store((head + 1) % TX_CAP, Ordering::Release);
+    }
+}
+
+/// Output one byte on COM1 (and the VGA mirror). Call with interrupts off.
+pub fn serial_out(b: u8) {
+    vga_putc(b);
+    if !TX_ASYNC.load(Ordering::Relaxed) {
+        tx_put_sync(b);
+        return;
+    }
+    let tail = TX_TAIL.load(Ordering::Relaxed);
+    let next = (tail + 1) % TX_CAP;
+    if next == TX_HEAD.load(Ordering::Acquire) {
+        // Ring full: send the oldest byte now (wait for the UART) to make room.
+        let head = TX_HEAD.load(Ordering::Relaxed);
+        tx_put_sync(unsafe { (*core::ptr::addr_of!(TX))[head] });
+        TX_HEAD.store((head + 1) % TX_CAP, Ordering::Release);
+        TX_OVERFLOW_SYNC.fetch_add(1, Ordering::Relaxed);
+    }
+    unsafe { (*core::ptr::addr_of_mut!(TX))[tail] = b };
+    TX_TAIL.store(next, Ordering::Release);
+    // Start (or keep) the interrupt-driven drain.
+    outb(COM1 + 1, IER_RX | IER_THRE);
+    tx_pump();
+}
+
+/// Switch to buffered output (once interrupts will be on to drain it).
+pub fn enable_async_tx() {
+    TX_ASYNC.store(true, Ordering::SeqCst);
+}
+
+/// Back to direct output, flushing what is buffered first (panic path).
+pub fn serial_sync() {
+    TX_ASYNC.store(false, Ordering::SeqCst);
+    loop {
+        let head = TX_HEAD.load(Ordering::Relaxed);
+        if head == TX_TAIL.load(Ordering::Acquire) {
+            break;
+        }
+        tx_put_sync(unsafe { (*core::ptr::addr_of!(TX))[head] });
+        TX_HEAD.store((head + 1) % TX_CAP, Ordering::Release);
+    }
+    outb(COM1 + 1, IER_RX);
+}
+
+/// Bytes waiting in the transmit ring.
+pub fn tx_pending() -> usize {
+    (TX_TAIL.load(Ordering::Acquire) + TX_CAP - TX_HEAD.load(Ordering::Acquire)) % TX_CAP
 }
 
 // ----------------------------------------------------------------------------
@@ -212,9 +306,12 @@ pub fn on_keyboard_irq() {
 }
 
 /// Called on every timer tick (interrupts off): picks up a keyboard byte
-/// whose IRQ1 was lost or never raised, so input cannot stall for good.
+/// whose IRQ1 was lost or never raised, so input cannot stall for good, and
+/// nudges the serial transmitter the same way.
 pub fn poll_keyboard() {
     take_keyboard_byte();
+    tx_pump();
+    vga_sync_cursor();
 }
 
 // ----------------------------------------------------------------------------
@@ -230,30 +327,60 @@ const ATTR: u16 = 0x07 << 8;
 static mut ROW: usize = 0;
 static mut COL: usize = 0;
 static mut CLEARED: bool = false;
+/// First cell of the visible screen inside VGA text memory. Scrolling moves
+/// this window (CRTC start address) instead of copying the screen: one
+/// line of writes per newline, and a full copy only when the window reaches
+/// the end of the 32 KiB text memory (every few screens).
+static mut BASE: usize = 0;
+/// Cells of text memory at 0xB8000 (32 KiB of 16-bit cells).
+const TEXT_CELLS: usize = 16 * 1024;
+/// Cursor moved since the hardware cursor was last set (`vga_sync_cursor`).
+static CURSOR_DIRTY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 fn cell(row: usize, col: usize) -> *mut u16 {
-    (VGA as *mut u16).wrapping_add(row * COLS + col)
+    (VGA as *mut u16).wrapping_add(unsafe { BASE } + row * COLS + col)
+}
+
+fn crtc(index: u8, value: u8) {
+    outb(0x3D4, index);
+    outb(0x3D5, value);
+}
+
+fn set_start(base: usize) {
+    crtc(0x0C, (base >> 8) as u8);
+    crtc(0x0D, (base & 0xFF) as u8);
 }
 
 fn scroll() {
     unsafe {
-        for r in 1..ROWS {
-            for c in 0..COLS {
-                cell(r - 1, c).write_volatile(cell(r, c).read_volatile());
+        if BASE + (ROWS + 1) * COLS > TEXT_CELLS {
+            // Out of text memory: move the screen (minus its top line) back
+            // to the start.
+            let vga = VGA as *mut u16;
+            for i in 0..(ROWS - 1) * COLS {
+                vga.add(i).write_volatile(vga.add(BASE + COLS + i).read_volatile());
             }
+            BASE = 0;
+        } else {
+            BASE += COLS;
         }
         for c in 0..COLS {
             cell(ROWS - 1, c).write_volatile(ATTR | b' ' as u16);
         }
+        set_start(BASE);
     }
 }
 
-fn update_cursor(row: usize, col: usize) {
-    let pos = (row * COLS + col) as u16;
-    outb(0x3D4, 0x0F);
-    outb(0x3D5, (pos & 0xFF) as u8);
-    outb(0x3D4, 0x0E);
-    outb(0x3D5, (pos >> 8) as u8);
+/// Move the hardware cursor to where text is being written, if it moved.
+/// Called from the timer tick: the cursor is cosmetic, and setting it for
+/// every byte cost four port writes each (a host exit apiece in a VM).
+pub fn vga_sync_cursor() {
+    if !CURSOR_DIRTY.swap(false, Ordering::Relaxed) {
+        return;
+    }
+    let pos = unsafe { BASE + ROW * COLS + COL } as u16;
+    crtc(0x0F, (pos & 0xFF) as u8);
+    crtc(0x0E, (pos >> 8) as u8);
 }
 
 /// Write one byte to the VGA screen (newline, carriage return, backspace
@@ -266,6 +393,8 @@ pub fn vga_putc(b: u8) {
             for i in 0..ROWS * COLS {
                 (VGA as *mut u16).wrapping_add(i).write_volatile(ATTR | b' ' as u16);
             }
+            BASE = 0;
+            set_start(0);
             CLEARED = true;
         }
         match b {
@@ -295,6 +424,6 @@ pub fn vga_putc(b: u8) {
             scroll();
             ROW = ROWS - 1;
         }
-        update_cursor(ROW, COL);
+        CURSOR_DIRTY.store(true, Ordering::Relaxed);
     }
 }

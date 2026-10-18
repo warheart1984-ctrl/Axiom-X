@@ -226,9 +226,7 @@ const COM1: u16 = 0x3F8;
 
 /// Write one byte to COM1, waiting for the transmit holding register.
 pub fn serial_write_byte(b: u8) {
-    while inb(COM1 + 5) & 0x20 == 0 {}
-    outb(COM1, b);
-    console::vga_putc(b);
+    console::serial_out(b);
 }
 
 /// Allocation-free `core::fmt::Write` sink on COM1, usable from interrupt
