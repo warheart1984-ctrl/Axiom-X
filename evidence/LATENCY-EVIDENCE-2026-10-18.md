@@ -1,6 +1,6 @@
 # Interrupt latency — measurement pass (2026-10-18)
 
-**Status: `partial`.** This adds measurement only; no behaviour changes. Numbers are from QEMU TCG (`latency-qemu-2026-10-18.log`). TCG inflates absolute times, especially port I/O, so the ranking matters more than the microseconds. The Hyper-V run is pending.
+**Status: `partial`.** This adds measurement only; no behaviour changes. Numbers are from QEMU TCG (`latency-qemu-2026-10-18.log`). TCG inflates absolute times, especially port I/O, so the ranking matters more than the microseconds. The same workload was then run on Hyper-V (see below).
 
 ## Why ticks are lost
 
@@ -52,6 +52,37 @@ These run with every syscall traced to serial.
 
 `sys getpid` should be trivial. Its time is the per-syscall **trace line written to serial inside the call**. Tick gaps: max 47 ms, about 86 lost.
 
+## Results (Hyper-V Gen 1, `hyperv-serial-2026-10-18-0906.log`)
+
+Run with `-Interactive -UseLedger -Cleanup` and the ISO above. The tick is the APIC timer at 100.1 Hz (1 s check). The workload was the same as in QEMU, typed in vmconnect.
+
+| Region (interactive workload) | QEMU max | Hyper-V max |
+|---|---:|---:|
+| `sys ax_fs_install` | 336 ms | **806 ms** |
+| `sys ax_spawn_module` | 57 ms | **391 ms** |
+| `sys ax_fs_write` | 78 ms | **221 ms** |
+| `sys write` | 71 ms | **207 ms** |
+| `ata command`: average per sector | 4.7 ms | **11.8 ms** |
+| max tick gap | 341 ms | **806 ms** |
+
+- **ATA cost.** About 12 ms per 512-byte sector is roughly 43 KB/s. The driver moves each sector as 256 single `inw`/`outw` port accesses, and on Hyper-V's emulated IDE each access is a trap to the host.
+- **Self-tests.**
+  - `sys ax_get_evidence` reached 370 ms: the audit reads older records back from the ledger disk, with interrupts off.
+  - ATA commands reached 223 ms.
+  - Over 4843 ticks, about 542 were lost.
+- **Console only** (`lat reset`, then `help` three times, then `lat`):
+  - `sys write` reached 304 ms;
+  - max tick gap 37 ms;
+  - about 55 of 765 ticks were lost, roughly 7%.
+
+  The emulated COM port drains far slower than 115200 baud.
+- **Host scheduling.** One window showed a 194 ms `timer tick`, although the handler is tiny. This is most likely the host descheduling the vCPU while the TSC kept running. The kernel cannot remove that, so the target is a bound on the kernel's own regions, not on gaps.
+- **Disks after the run.** `ledger-tool fs-verify evidence/fs.img evidence/ledger.img <key>` gives **PASS**:
+  - 14727 records from genesis, 13 boots, 117 archived signed checkpoints;
+  - 6 files, all matching their SHA-256;
+  - the root `19202806…` is the newest anchor (record #13522).
+  - `/bin/h` differs from `/bin/hello` because `elf-hello` was rebuilt against the newer user library.
+
 ## Diagnosis, ranked
 
 1. **Whole-file FS operations under one interrupts-off lock** (`with_fs`): install, write and read.
@@ -65,6 +96,9 @@ These run with every syscall traced to serial.
 
 ## Fix plan (not implemented here)
 
+The Hyper-V run confirms the ranking. It moves the disk up, and adds a cheap step 0:
+
+0. **Faster ATA transfers.** Move each sector with one `rep insw`/`rep outsw`; emulators can often batch a string I/O instruction into one exit. Then transfer several sectors per command. Re-measure `ata command` with `lat`.
 1. **Serial TX ring buffer.** `write` copies into a kernel buffer and returns. The UART drains the buffer from its transmit-empty interrupt (IRQ4 is already wired), or from the tick. This removes cause 2 for both user and kernel output.
 2. **Interrupts on inside long system calls.** File-system work and spawn would run with IF=1 under a lock that does not disable interrupts. ATA would disable interrupts per command only.
    - This needs the shared kernel structures to be safe against preemption. That is the same locking work SMP needs, done first on one CPU.
