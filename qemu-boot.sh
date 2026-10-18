@@ -76,6 +76,20 @@ grub-mkrescue -o evidence/axiom-x-dbg.iso evidence/iso >/dev/null 2>&1
 LEDGER_DISK="${LEDGER_DISK:-evidence/ledger.img}"
 [ -f "$LEDGER_DISK" ] || truncate -s 4M "$LEDGER_DISK"
 
+# LIVE=1: show the kernel's serial console on this terminal as it boots
+# (no interrupt trace, no log file). Runs until Ctrl-C: under `timeout`
+# QEMU either stops on SIGTTIN (it reads the terminal for -serial stdio)
+# or, with --foreground, was not reliably ended once it owned the tty.
+if [ "${LIVE:-0}" = 1 ]; then
+    echo "=== booting Axiom-X (live serial console; press Ctrl-C to stop the VM) ==="
+    qemu-system-x86_64 -cdrom evidence/axiom-x-dbg.iso -boot d \
+        -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
+        -serial stdio -display none -no-reboot -m 256M || true
+    echo
+    echo "=== VM stopped ==="
+    exit 0
+fi
+
 timeout "$SECS" qemu-system-x86_64 -cdrom evidence/axiom-x-dbg.iso -boot d \
     -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
     -serial file:evidence/serial-mb2.log -display none -no-reboot \
