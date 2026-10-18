@@ -57,7 +57,14 @@ cat evidence/iso/boot/grub/grub.cfg
 grub-file --is-x86-multiboot2 evidence/iso/boot/kernel.elf
 grub-mkrescue -o evidence/axiom-x-dbg.iso evidence/iso >/dev/null 2>&1
 
-timeout "$SECS" qemu-system-x86_64 -cdrom evidence/axiom-x-dbg.iso \
+# Persistent evidence ledger: a raw disk on the primary IDE master (the
+# kernel's ATA driver). Reused across boots so the chain continues; delete
+# the image (or set LEDGER_DISK) to start a fresh chain.
+LEDGER_DISK="${LEDGER_DISK:-evidence/ledger.img}"
+[ -f "$LEDGER_DISK" ] || truncate -s 4M "$LEDGER_DISK"
+
+timeout "$SECS" qemu-system-x86_64 -cdrom evidence/axiom-x-dbg.iso -boot d \
+    -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
     -serial file:evidence/serial-mb2.log -display none -no-reboot \
     -d int,cpu_reset -D evidence/qemu-mb2.log -m 256M || true
 

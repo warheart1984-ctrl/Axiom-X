@@ -15,6 +15,7 @@
 #![no_std]
 
 pub mod sha256;
+pub mod store;
 
 pub use sha256::{sha256, Sha256};
 
@@ -24,6 +25,9 @@ pub mod kind {
     pub const PROCESS_CREATE: u32 = 5;
     pub const PROCESS_EXIT: u32 = 6;
     pub const CONTRACT_ENFORCE: u32 = 15;
+    /// Axiom-X kernel boot (not in `EvidenceType`): `arg` = boot number,
+    /// `result` = records resumed from disk (-1 = none / not verified).
+    pub const BOOT: u32 = 100;
 }
 
 /// Outcome of the decision a record describes.
@@ -118,6 +122,8 @@ pub struct Ledger<const N: usize> {
     digests: [Digest; N],
     total: u64,
     head: Digest,
+    /// First sequence number this ledger has held (0, or the resume point).
+    base: u64,
 }
 
 impl<const N: usize> Default for Ledger<N> {
@@ -132,7 +138,17 @@ impl<const N: usize> Ledger<N> {
             seq: 0, tick: 0, kind: 0, decision: 0, pid: 0, subject: 0,
             nr: 0, arg: 0, result: 0, rights: 0, prev: [0; 32],
         };
-        Self { records: [ZERO; N], digests: [[0; 32]; N], total: 0, head: [0; 32] }
+        Self { records: [ZERO; N], digests: [[0; 32]; N], total: 0, head: [0; 32], base: 0 }
+    }
+
+    /// Continue an existing chain (e.g. one verified from disk) whose next
+    /// sequence number is `total` and head digest `head`. Older records are
+    /// not held in memory. Only valid on an empty ledger.
+    pub fn resume(&mut self, total: u64, head: Digest) {
+        assert_eq!(self.total, self.base, "resume on a non-empty ledger");
+        self.total = total;
+        self.head = head;
+        self.base = total;
     }
 
     /// Chain `record` onto the head (its `seq` and `prev` are assigned
@@ -161,7 +177,7 @@ impl<const N: usize> Ledger<N> {
 
     /// Oldest sequence number still held.
     pub fn oldest(&self) -> u64 {
-        self.total.saturating_sub(N as u64)
+        self.total.saturating_sub(N as u64).max(self.base)
     }
 
     /// Record `seq` with its digest, if still held.

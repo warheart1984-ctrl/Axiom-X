@@ -120,3 +120,176 @@ pub fn ledger_summary() -> (u64, Digest) {
 pub fn ledger_get(seq: u64) -> Option<(Record, Digest)> {
     x86_64::instructions::interrupts::without_interrupts(|| LEDGER.lock().get(seq))
 }
+
+// ============================================================================
+// Persistence: the chain on disk, verified at boot and continued across boots
+// ============================================================================
+
+use crate::ata;
+use axiom_x_ledger::store::{self, Superblock, SuperblockError};
+use axiom_x_ledger::verify_window;
+
+struct Persist {
+    /// Records are being written to disk.
+    enabled: bool,
+    /// Records already on disk (the next sequence to write).
+    persisted: u64,
+    /// This boot's number in the disk ledger's history.
+    boots: u64,
+    /// Records the disk can hold.
+    capacity: u64,
+}
+
+static PERSIST: Mutex<Persist> = Mutex::new(Persist { enabled: false, persisted: 0, boots: 0, capacity: 0 });
+
+/// Outcome of attaching the persisted ledger at boot.
+#[derive(Clone, Copy, Debug)]
+pub enum PersistReport {
+    /// No usable disk: the ledger is memory-only for this boot.
+    NoDisk(ata::AtaError),
+    /// Blank disk: formatted, new chain from genesis.
+    Formatted { sectors: u64 },
+    /// Persisted chain verified from genesis and continued.
+    Resumed { records: u64, boots: u64, head: Digest },
+    /// The disk holds something we must not continue or overwrite.
+    Refused { reason: &'static str, broken_at: Option<u64> },
+}
+
+fn read_slot(seq: u64, cache: &mut (u64, [u8; store::SECTOR])) -> Option<(Record, Digest)> {
+    let (sector, off) = store::slot_location(seq);
+    if cache.0 != sector {
+        ata::read_sector(sector, &mut cache.1).ok()?;
+        cache.0 = sector;
+    }
+    Some(store::decode_slot(&cache.1[off..off + store::SLOT]))
+}
+
+/// Attach the disk ledger. Must run before the first record of this boot
+/// is appended. Appends this boot's BOOT record either way.
+pub fn persist_init() -> PersistReport {
+    let report = attach_disk();
+    let (boot_no, resumed) = match report {
+        PersistReport::Formatted { .. } => (1, 0),
+        PersistReport::Resumed { records, boots, .. } => (boots, records as i64),
+        _ => (0, -1),
+    };
+    record(kind::BOOT, decision::ALLOW, 0, 0, 0, boot_no, resumed, Rights::NONE);
+    report
+}
+
+fn attach_disk() -> PersistReport {
+    let sectors = match ata::identify() {
+        Ok(n) => n,
+        Err(e) => return PersistReport::NoDisk(e),
+    };
+    let capacity = store::capacity(sectors);
+    let mut sb_buf = [0u8; store::SECTOR];
+    if ata::read_sector(0, &mut sb_buf).is_err() {
+        return PersistReport::Refused { reason: "cannot read superblock", broken_at: None };
+    }
+    match Superblock::decode(&sb_buf) {
+        Err(SuperblockError::Blank) => {
+            let sb = Superblock { total: 0, head: [0; 32], boots: 1 };
+            if ata::write_sector(0, &sb.encode()).and_then(|_| ata::flush()).is_err() {
+                return PersistReport::Refused { reason: "cannot format", broken_at: None };
+            }
+            *PERSIST.lock() = Persist { enabled: true, persisted: 0, boots: 1, capacity };
+            PersistReport::Formatted { sectors }
+        }
+        Err(SuperblockError::Foreign) => PersistReport::Refused {
+            reason: "disk holds something else; not formatting over it",
+            broken_at: None,
+        },
+        Err(SuperblockError::Corrupt) => {
+            PersistReport::Refused { reason: "superblock checksum mismatch", broken_at: None }
+        }
+        Ok(sb) => {
+            if sb.total > capacity {
+                return PersistReport::Refused {
+                    reason: "superblock claims more records than the disk holds",
+                    broken_at: None,
+                };
+            }
+            // Re-verify every persisted link from genesis before trusting it.
+            let mut cache = (u64::MAX, [0u8; store::SECTOR]);
+            match verify_window(0, sb.total, |seq| read_slot(seq, &mut cache)) {
+                Err(seq) => PersistReport::Refused { reason: "persisted chain broken", broken_at: Some(seq) },
+                Ok(head) if head != sb.head => PersistReport::Refused {
+                    reason: "superblock head does not match the chain",
+                    broken_at: None,
+                },
+                Ok(head) => {
+                    LEDGER.lock().resume(sb.total, head);
+                    let boots = sb.boots + 1;
+                    let sb2 = Superblock { total: sb.total, head, boots };
+                    if ata::write_sector(0, &sb2.encode()).and_then(|_| ata::flush()).is_err() {
+                        return PersistReport::Refused { reason: "cannot update superblock", broken_at: None };
+                    }
+                    *PERSIST.lock() = Persist { enabled: true, persisted: sb.total, boots, capacity };
+                    PersistReport::Resumed { records: sb.total, boots, head }
+                }
+            }
+        }
+    }
+}
+
+/// Write every record appended since the last flush, then the superblock,
+/// then commit the drive cache. Returns records written.
+pub fn persist_flush() -> Result<u64, &'static str> {
+    let (enabled, from, boots, capacity) = {
+        let p = PERSIST.lock();
+        (p.enabled, p.persisted, p.boots, p.capacity)
+    };
+    if !enabled {
+        return Ok(0);
+    }
+    let (total, _) = ledger_summary();
+    if total > capacity {
+        PERSIST.lock().enabled = false;
+        return Err("disk ledger full; persistence stopped");
+    }
+    let mut sector_buf = [0u8; store::SECTOR];
+    let mut cur_sector = u64::MAX;
+    let mut last_digest = None;
+    for seq in from..total {
+        let (sector, off) = store::slot_location(seq);
+        if sector != cur_sector {
+            if cur_sector != u64::MAX {
+                ata::write_sector(cur_sector, &sector_buf).map_err(|_| "write failed")?;
+            }
+            // Partly filled sector: keep the slots already on disk.
+            ata::read_sector(sector, &mut sector_buf).map_err(|_| "read failed")?;
+            cur_sector = sector;
+        }
+        let Some((r, d)) = ledger_get(seq) else {
+            PERSIST.lock().enabled = false;
+            return Err("records left memory before they were flushed; persistence stopped");
+        };
+        sector_buf[off..off + store::SLOT].copy_from_slice(&store::encode_slot(&r, &d));
+        last_digest = Some(d);
+    }
+    let Some(head) = last_digest else { return Ok(0) };
+    ata::write_sector(cur_sector, &sector_buf).map_err(|_| "write failed")?;
+    let sb = Superblock { total, head, boots };
+    ata::write_sector(0, &sb.encode()).map_err(|_| "superblock write failed")?;
+    ata::flush().map_err(|_| "cache flush failed")?;
+    PERSIST.lock().persisted = total;
+    Ok(total - from)
+}
+
+/// Record `seq` from memory, or from disk if it is persisted but no longer
+/// held in memory (e.g. written by an earlier boot).
+pub fn ledger_get_any(seq: u64) -> Option<(Record, Digest)> {
+    if let Some(r) = ledger_get(seq) {
+        return Some(r);
+    }
+    let (enabled, persisted) = {
+        let p = PERSIST.lock();
+        (p.enabled, p.persisted)
+    };
+    if !enabled || seq >= persisted {
+        return None;
+    }
+    let mut cache = (u64::MAX, [0u8; store::SECTOR]);
+    read_slot(seq, &mut cache)
+}

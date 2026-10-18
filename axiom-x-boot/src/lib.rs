@@ -924,6 +924,7 @@ extern "C" fn init_process() -> ! {
     // address space. init stays runnable and is preempted like they are.
     #[cfg(feature = "freestanding")]
     {
+        user::attach_ledger_disk();
         user::install_hooks();
         user::run_rounds();
     }

@@ -10,3 +10,5 @@ evidence/tmp/
 *.lst
 # Stray numbered files from an accidental shell redirect
 /axiom-x-capability/src/[0-9]*
+# Ledger disk images written by qemu-boot.sh
+evidence/*.img

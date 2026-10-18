@@ -22,6 +22,7 @@ pub mod interrupts;
 pub mod syscall;
 pub mod sched;
 pub mod governance;
+pub mod ata;
 
 pub use process::*;
 pub use interrupts::*;

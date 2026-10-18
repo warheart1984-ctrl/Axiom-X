@@ -257,7 +257,7 @@ fn sys_get_evidence(seq: u64, buf: u64, len: u64) -> i64 {
     if !user_range_accessible(buf, EVIDENCE_RECORD_BYTES, true) {
         return -EFAULT;
     }
-    let Some((record, digest)) = crate::governance::ledger_get(seq) else {
+    let Some((record, digest)) = crate::governance::ledger_get_any(seq) else {
         return -ENOENT;
     };
     let enc = record.encode();

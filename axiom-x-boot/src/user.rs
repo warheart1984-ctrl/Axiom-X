@@ -283,6 +283,50 @@ fn release_process(p: &Process) -> u64 {
     crate::free_address_space(p.page_table_root) + crate::free_kernel_stack(p.kernel_stack_top)
 }
 
+/// Attach the persistent ledger (before this boot appends anything) and
+/// report what was found on disk.
+pub fn attach_ledger_disk() {
+    use axiom_x_arch::governance::PersistReport;
+    match governance::persist_init() {
+        PersistReport::NoDisk(e) => {
+            serial_print!("[ledger] no disk ({:?}): evidence is memory-only this boot\n", e)
+        }
+        PersistReport::Formatted { sectors } => serial_print!(
+            "[ledger] blank disk ({} sectors) formatted: new chain from genesis (boot 1)\n",
+            sectors
+        ),
+        PersistReport::Resumed { records, boots, head } => {
+            let hex = short_hex(&head);
+            serial_print!(
+                "[ledger] boot {}: verified {} persisted records from genesis; resuming chain at seq {} (head {}...)\n",
+                boots,
+                records,
+                records,
+                core::str::from_utf8(&hex).unwrap_or("?")
+            )
+        }
+        PersistReport::Refused { reason, broken_at } => match broken_at {
+            Some(seq) => serial_print!(
+                "[ledger] REFUSED disk ledger: {} at record {}; disk left untouched, evidence is memory-only\n",
+                reason, seq
+            ),
+            None => serial_print!(
+                "[ledger] REFUSED disk ledger: {}; disk left untouched, evidence is memory-only\n",
+                reason
+            ),
+        },
+    }
+}
+
+/// Persist the ledger and report it.
+fn flush_ledger() {
+    match governance::persist_flush() {
+        Ok(0) => {}
+        Ok(n) => serial_print!("[ledger] persisted {} new records to disk\n", n),
+        Err(why) => serial_print!("[ledger] persistence error: {}\n", why),
+    }
+}
+
 /// Install the hooks the syscall layer needs from the boot crate.
 pub fn install_hooks() {
     axiom_x_arch::syscall::set_process_end_hook(on_process_end);
@@ -353,6 +397,7 @@ pub fn run_rounds() {
         let (n, freed) = reap();
         let left = axiom_x_arch::interrupts::process_table().count();
         after[round] = frames_in_use();
+        flush_ledger();
         let (records, head) = governance::ledger_summary();
         let hex = short_hex(&head);
         serial_print!(
