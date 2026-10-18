@@ -1,0 +1,16 @@
+df
+ls
+write notes.txt hello from axfs
+cat notes.txt
+write notes.txt second version
+cat notes.txt
+install elf-hello /bin/hello
+install ledger.key /k
+ls
+run /bin/hello
+run /missing
+rm notes.txt
+cat notes.txt
+rights
+df
+ls

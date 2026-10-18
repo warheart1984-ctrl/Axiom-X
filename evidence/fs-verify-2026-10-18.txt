@@ -1,0 +1,44 @@
+$ ledger-tool fs-verify fs-final.img fsl-final.img 5b82c607bffbf55da01a58b242584edb208cb412e030244ddfc7b7c579705f8a
+== ledger evidence/tmp/fsl-final.img
+journal: clear
+superblock: copy A (generation 12), 1041 records, 5 boots, 12 checkpoints archived, head 465f66aab5329207ebd9ce47ff6786f261cc79c1ed7b11e6ed7fc8f3f86ef9ae
+hash chain: internally consistent from genesis, matches superblock head
+checkpoint signature: Valid
+checkpoint archive: 12 signed checkpoints verified; each is a prefix of the current chain
+  BOOT record #0: boot 1, 2026-10-18 11:09:30 (RTC, no time zone), resumed 0 records
+  BOOT record #355: boot 2, 2026-10-18 11:10:59 (RTC, no time zone), resumed 355 records
+  BOOT record #535: boot 3, 2026-10-18 11:12:21 (RTC, no time zone), resumed 535 records
+  BOOT record #645: boot 4, 2026-10-18 11:13:22 (RTC, no time zone), resumed 645 records
+  BOOT record #712: boot 5, 2026-10-18 11:14:11 (RTC, no time zone), resumed 712 records
+PASS: 1041 records verified from genesis (5 BOOT records, 10 denies); latest and 12 archived checkpoints signed by 5b82c607bffbf55da01a58b242584edb208cb412e030244ddfc7b7c579705f8a
+== file system evidence/tmp/fs-final.img
+superblock: generation 7, 3 files, table at sector 135, 151 of 32768 sectors used; table matches root a021901ad9c40f8b96483f69ac310916042dee2d41cb3413ace58bd7d71be1a1
+         9 bytes  v1   sha256 fc959d1ce4ecb7d84b0641d16a3771158711adb9d767701ef46ccf86e980060f  log.txt
+     16880 bytes  v1   sha256 42e3d209d3f107bca6d7032fab7d40878bd9d4957432863f8899b5e3e9117d05  /bin/hello
+        12 bytes  v1   sha256 6cf0a0560dae9680b204d7ac4d8f132ddedb50ce9eda26801fac2176f0ff4e5a  final.txt
+files: all 3 verified against their SHA-256
+  FS_MOUNT DENY #536: mounted read-only (root 28bc790c65942bad..)
+  FS_MOUNT DENY #646: mounted read-only (root 8c468f8d431802e6..)
+ledger anchors: 6 FS_COMMIT, 3 FS_MOUNT allowed, 2 FS_MOUNT refused
+PASS: file system root a021901ad9c40f8b96483f69ac310916042dee2d41cb3413ace58bd7d71be1a1 is the newest ledger anchor (record #787), signed chain verified
+exit 0
+
+$ ledger-tool fs-verify fs-after-boot1.img fsl-final.img (rolled back)
+== file system evidence/tmp/fs-after-boot1.img
+superblock: generation 5, 1 files, table at sector 101, 117 of 32768 sectors used; table matches root 8c468f8d431802e662137a5454b97a2fa73cc3ab5bf78f9859416d8b0d2e2bf1
+     16880 bytes  v1   sha256 42e3d209d3f107bca6d7032fab7d40878bd9d4957432863f8899b5e3e9117d05  /bin/hello
+files: all 1 verified against their SHA-256
+  FS_MOUNT DENY #536: mounted read-only (root 28bc790c65942bad..)
+  FS_MOUNT DENY #646: mounted read-only (root 8c468f8d431802e6..)
+ledger anchors: 6 FS_COMMIT, 3 FS_MOUNT allowed, 2 FS_MOUNT refused
+FAIL: newest ledger anchor (record #787) is root a021901ad9c40f8b96483f69ac310916042dee2d41cb3413ace58bd7d71be1a1; the image was changed or rolled back
+exit 1
+
+$ ledger-tool fs-verify fs-tampered.img fsl-final.img (one bit flipped in final.txt)
+== file system evidence/tmp/fs-tampered.img
+superblock: generation 7, 3 files, table at sector 135, 151 of 32768 sectors used; table matches root a021901ad9c40f8b96483f69ac310916042dee2d41cb3413ace58bd7d71be1a1
+         9 bytes  v1   sha256 fc959d1ce4ecb7d84b0641d16a3771158711adb9d767701ef46ccf86e980060f  log.txt
+     16880 bytes  v1   sha256 42e3d209d3f107bca6d7032fab7d40878bd9d4957432863f8899b5e3e9117d05  /bin/hello
+        12 bytes  v1   sha256 6cf0a0560dae9680b204d7ac4d8f132ddedb50ce9eda26801fac2176f0ff4e5a  final.txt
+FAIL: file 'final.txt' does not match its SHA-256
+exit 1

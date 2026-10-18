@@ -958,6 +958,7 @@ extern "C" fn init_process() -> ! {
     #[cfg(feature = "freestanding")]
     {
         user::attach_ledger_disk();
+        user::mount_fs();
         user::install_hooks();
         if cmdline_flag("axiom.selftest=off") {
             serial_puts("[kernel] self-tests skipped (axiom.selftest=off)\n");

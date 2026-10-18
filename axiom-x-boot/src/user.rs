@@ -266,8 +266,19 @@ fn spawn_elf(name: &str, bytes: &[u8], parent: Option<u32>, rights: Rights) -> R
     Ok(pid)
 }
 
-/// `AX_SPAWN_MODULE` hook: start the boot module called `name`.
+/// `AX_SPAWN_MODULE` hook: start the boot module called `name`, or, for a
+/// name starting with '/', the program stored in that file (hash-verified
+/// on read; the syscall layer has already required READ).
 fn spawn_module_hook(name: &str, parent: u32, rights: Rights) -> i64 {
+    if name.starts_with('/') {
+        return match axiom_x_arch::fsys::load_program(name) {
+            Ok(bytes) => match spawn_elf(name, bytes, Some(parent), rights) {
+                Ok(pid) => pid as i64,
+                Err(e) => e,
+            },
+            Err(e) => e,
+        };
+    }
     if name == LEDGER_KEY_MODULE {
         // Kernel-only module: not a program, and not even acknowledged.
         return -axiom_x_arch::syscall::ENOENT;
@@ -278,6 +289,57 @@ fn spawn_module_hook(name: &str, parent: u32, rights: Rights) -> i64 {
             Ok(pid) => pid as i64,
             Err(e) => e,
         },
+    }
+}
+
+/// `AX_FS_INSTALL` source: any boot module except the signing key.
+fn module_bytes_hook(name: &str) -> Option<&'static [u8]> {
+    if name == LEDGER_KEY_MODULE {
+        return None;
+    }
+    crate::boot_modules().iter().find(|m| m.name() == name).map(|m| m.bytes())
+}
+
+/// Mount the file system disk (primary slave) and report it. Runs after
+/// the ledger is attached, since the mount is checked against its anchors.
+pub fn mount_fs() {
+    use axiom_x_arch::fsys::{Anchor, MountReport};
+    fn hex8(d: &[u8; 32]) -> u64 {
+        u64::from_be_bytes(d[..8].try_into().unwrap())
+    }
+    match axiom_x_arch::fsys::mount() {
+        MountReport::NoDisk => serial_puts("[fs] no file-system disk (primary slave): no files
+"),
+        MountReport::Formatted { sectors, root } => serial_print!(
+            "[fs] blank disk ({} sectors) formatted as AXFS; root {:016x}.. anchored in ledger
+",
+            sectors,
+            hex8(&root)
+        ),
+        MountReport::Mounted { files, root, anchor, writable } => {
+            serial_print!("[fs] mounted AXFS: {} files, root {:016x}.., ", files, hex8(&root));
+            match anchor {
+                Anchor::FirstUse => serial_puts("no ledger anchor yet (first use)"),
+                Anchor::Matches(seq) => serial_print!("matches ledger anchor #{}", seq),
+                Anchor::Mismatch(seq) => serial_print!(
+                    "DOES NOT MATCH ledger anchor #{} (changed outside the kernel)", seq
+                ),
+            }
+            serial_puts(if writable { "; read-write
+" } else { "; READ-ONLY
+" });
+        }
+        MountReport::Refused(e) => serial_print!("[fs] disk not mounted: {:?} (left untouched)
+", e),
+        MountReport::CorruptFile { name, root } => {
+            let n = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+            serial_print!(
+                "[fs] file '{}' fails its hash check: mounted READ-ONLY; root {:016x}..
+",
+                core::str::from_utf8(&name[..n]).unwrap_or("?"),
+                hex8(&root)
+            );
+        }
     }
 }
 
@@ -405,6 +467,7 @@ fn flush_ledger() {
 pub fn install_hooks() {
     axiom_x_arch::syscall::set_process_end_hook(on_process_end);
     axiom_x_arch::syscall::set_spawn_hook(spawn_module_hook);
+    axiom_x_arch::syscall::set_module_bytes_hook(module_bytes_hook);
     axiom_x_arch::syscall::set_release_hook(release_process);
 }
 
@@ -496,14 +559,17 @@ pub fn run_rounds() {
 
 /// The interactive shell module and what it may do: talk on the console
 /// (SEND + RECV), start programs and pass rights on (SPAWN + DELEGATE),
-/// and observe processes and the ledger (EVIDENCE).
+/// observe processes and the ledger (EVIDENCE), and read and change files
+/// (READ + WRITE).
 const SHELL_MODULE: &str = "elf-shell";
 const SHELL_RIGHTS: Rights = Rights::new(
     Rights::SEND.bits()
         | Rights::RECV.bits()
         | Rights::SPAWN.bits()
         | Rights::DELEGATE.bits()
-        | Rights::EVIDENCE.bits(),
+        | Rights::EVIDENCE.bits()
+        | Rights::READ.bits()
+        | Rights::WRITE.bits(),
 );
 
 /// Run the shell on the console forever, restarting it when it exits (like

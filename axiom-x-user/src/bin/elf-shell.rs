@@ -3,16 +3,16 @@
 //! Reads the console (serial or PS/2 keyboard, via `read(0)`), edits a
 //! line locally (echo, backspace), and runs built-in commands. Everything
 //! it does goes through the same governed syscalls as any program: the
-//! kernel grants the shell SEND, RECV, SPAWN, DELEGATE and EVIDENCE, and
-//! programs it starts get only what `run` passes on.
+//! kernel grants the shell SEND, RECV, SPAWN, DELEGATE, EVIDENCE, READ
+//! and WRITE, and programs it starts get only what `run` passes on.
 
 #![no_std]
 #![no_main]
 
 use axiom_x_user::ledger::{civil::DateTime, verify_window};
 use axiom_x_user::{
-    clock_ns, entry, errno, evidence, evidence_count, getpid, print, println, proc_list, read, spawn, wait, write,
-    ExitStatus, ProcInfo, Rights, CLOCK_MONOTONIC, CLOCK_MONOTONIC_COARSE, CLOCK_REALTIME, CLOCK_REALTIME_COARSE,
+    clock_ns, entry, errno, evidence, evidence_count, fs_delete, fs_info, fs_install, fs_list, fs_read, fs_write,
+    getpid, print, println, proc_list, read, spawn, wait, write, ExitStatus, FileInfo, ProcInfo, Rights, CLOCK_MONOTONIC, CLOCK_MONOTONIC_COARSE, CLOCK_REALTIME, CLOCK_REALTIME_COARSE,
 };
 
 const PROMPT: &str = "axiom> ";
@@ -27,9 +27,16 @@ fn help() {
     println!("  clocks                compare the PIT, TSC and RTC since boot");
     println!("  ps                    processes: pid, parent, state, rights, name");
     println!("  rights                this shell's rights");
-    println!("  run <program> [+evidence] [-send]");
-    println!("                        start a boot module and wait; it gets SEND by default,");
-    println!("                        +evidence adds EVIDENCE, -send removes SEND");
+    println!("  run <program> [+evidence] [+read] [-send]");
+    println!("                        start a boot module (or a file: /path) and wait; it gets");
+    println!("                        SEND by default, +evidence adds EVIDENCE, +read READ,");
+    println!("                        -send removes SEND");
+    println!("  ls                    files: size, version, SHA-256 prefix, name");
+    println!("  cat <file>            print a file (hash-verified by the kernel)");
+    println!("  write <file> <text>   create or replace a file with text");
+    println!("  rm <file>             delete a file");
+    println!("  install <module> <file>  copy a boot module into the file system");
+    println!("  df                    file-system root hash, generation, space, mode");
     println!("  ledger                verify the newest evidence records' hash chain");
     println!("  exit                  leave (the kernel starts a new shell)");
 }
@@ -46,6 +53,8 @@ fn rights_str(r: u64, out: &mut [u8; 8]) -> &str {
         (Rights::SPAWN, b'P'),
         (Rights::DELEGATE, b'D'),
         (Rights::EVIDENCE, b'E'),
+        (Rights::READ, b'r'),
+        (Rights::WRITE, b'w'),
     ] {
         if r & bit.bits() != 0 {
             out[n] = c;
@@ -79,7 +88,7 @@ fn cmd_rights() {
     match procs[..n.max(0) as usize].iter().find(|p| p.pid == me) {
         Some(p) => {
             let mut b = [0u8; 8];
-            println!("pid {}: rights {} ({:#x})  S=send R=recv P=spawn D=delegate E=evidence", me, rights_str(p.rights, &mut b), p.rights);
+            println!("pid {}: rights {} ({:#x})  S=send R=recv P=spawn D=delegate E=evidence r=read w=write", me, rights_str(p.rights, &mut b), p.rights);
         }
         None => println!("rights: cannot see own entry ({})", errno::name(n)),
     }
@@ -129,13 +138,14 @@ fn cmd_clocks() {
 fn cmd_run(args: &str) {
     let mut parts = args.split_whitespace();
     let Some(name) = parts.next() else {
-        println!("usage: run <program> [+evidence] [-send]");
+        println!("usage: run <program> [+evidence] [+read] [-send]");
         return;
     };
     let mut rights = Rights::SEND.bits();
     for flag in parts {
         match flag {
             "+evidence" => rights |= Rights::EVIDENCE.bits(),
+            "+read" => rights |= Rights::READ.bits(),
             "-send" => rights &= !Rights::SEND.bits(),
             other => {
                 println!("run: unknown flag '{}'", other);
@@ -176,6 +186,93 @@ fn cmd_ledger() {
     }
 }
 
+fn report(what: &str, r: i64) {
+    if r < 0 {
+        println!("{}: {} ({})", what, r, errno::name(r));
+    }
+}
+
+fn cmd_ls() {
+    let mut files = [FileInfo::EMPTY; 16];
+    let n = fs_list(&mut files);
+    if n < 0 {
+        return report("ls", n);
+    }
+    for f in &files[..n as usize] {
+        print!("{:>8} v{:<3} ", f.size, f.version);
+        for b in &f.digest[..6] {
+            print!("{:02x}", b);
+        }
+        println!("  {}", f.name());
+    }
+    println!("{} file(s)", n);
+}
+
+fn cmd_cat(name: &str) {
+    let mut buf = [0u8; 4096];
+    let n = fs_read(name, &mut buf);
+    if n < 0 {
+        return report("cat", n);
+    }
+    let shown = (n as usize).min(buf.len());
+    write(1, &buf[..shown]);
+    if shown > 0 && buf[shown - 1] != b'\n' {
+        println!();
+    }
+    if n as usize > shown {
+        println!("[{} of {} bytes shown]", shown, n);
+    }
+}
+
+fn cmd_write(args: &str) {
+    let Some((name, text)) = args.split_once(' ') else {
+        return println!("usage: write <file> <text>");
+    };
+    let mut buf = [0u8; MAX_LINE + 1];
+    let t = text.trim().as_bytes();
+    buf[..t.len()].copy_from_slice(t);
+    buf[t.len()] = b'\n';
+    let r = fs_write(name, &buf[..t.len() + 1]);
+    if r < 0 {
+        report("write", r)
+    } else {
+        println!("wrote {} bytes to {}", t.len() + 1, name);
+    }
+}
+
+fn cmd_install(args: &str) {
+    let mut p = args.split_whitespace();
+    let (Some(module), Some(path)) = (p.next(), p.next()) else {
+        return println!("usage: install <module> <file>");
+    };
+    let r = fs_install(module, path);
+    if r < 0 {
+        report("install", r)
+    } else {
+        println!("installed {} as {} ({} bytes)", module, path, r);
+    }
+}
+
+fn cmd_df() {
+    match fs_info() {
+        Ok(i) => {
+            print!("root ");
+            for b in &i.root[..16] {
+                print!("{:02x}", b);
+            }
+            println!("..");
+            println!(
+                "generation {}, {} file(s), {} KiB free, {}",
+                i.generation,
+                i.files,
+                i.free_sectors / 2,
+                if i.writable { "read-write" } else { "READ-ONLY (failed its ledger or hash check at mount)" }
+            );
+        }
+        Err(e) => report("df", e),
+    }
+}
+
 fn execute(line: &str) -> bool {
     let line = line.trim();
     let (cmd, rest) = match line.find(' ') {
@@ -193,6 +290,19 @@ fn execute(line: &str) -> bool {
         "rights" => cmd_rights(),
         "run" => cmd_run(rest),
         "ledger" => cmd_ledger(),
+        "ls" => cmd_ls(),
+        "cat" => cmd_cat(rest),
+        "write" => cmd_write(rest),
+        "rm" => {
+            let r = fs_delete(rest);
+            if r < 0 {
+                report("rm", r)
+            } else {
+                println!("removed {}", rest)
+            }
+        }
+        "install" => cmd_install(rest),
+        "df" => cmd_df(),
         "exit" => return false,
         other => println!("{}: unknown command (try 'help')", other),
     }

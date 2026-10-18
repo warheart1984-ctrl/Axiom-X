@@ -1,0 +1,7 @@
+df
+ls
+cat /bin/hello
+run /bin/hello
+run elf-noperm -send
+write log.txt boot two
+ls

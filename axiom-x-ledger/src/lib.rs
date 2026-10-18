@@ -34,6 +34,13 @@ pub mod kind {
     /// UNIX time (seconds) of the boot per the RTC (0 = unknown; no time
     /// zone: QEMU gives UTC, Hyper-V the host's local time).
     pub const BOOT: u32 = 100;
+    /// Axiom-X file-system change committed by `pid`: the new root hash
+    /// (SHA-256 of the file table) is split over `nr`, `arg`, `rights`,
+    /// `result` (8 bytes each, little-endian, in that order).
+    pub const FS_COMMIT: u32 = 101;
+    /// File system mounted (decision ALLOW) or found inconsistent with the
+    /// ledger / corrupt and mounted read-only (DENY); root hash as above.
+    pub const FS_MOUNT: u32 = 102;
 }
 
 /// Outcome of the decision a record describes.

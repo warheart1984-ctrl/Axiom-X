@@ -12,3 +12,4 @@ path = "src/main.rs"
 
 [dependencies]
 axiom-x-ledger = { path = "../axiom-x-ledger" }
+axiom-x-fs = { path = "../axiom-x-fs" }

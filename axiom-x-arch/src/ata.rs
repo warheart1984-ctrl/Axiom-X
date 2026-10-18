@@ -1,14 +1,15 @@
-//! ATA PIO block driver: primary bus, master drive, LBA28, polled.
+//! ATA PIO block driver: primary bus, master and slave drives, LBA28, polled.
 //!
-//! Interrupts from the drive are disabled (nIEN) and IRQ14 stays masked at
+//! The evidence ledger lives on the master, the file system on the slave.
+//! Interrupts from the drives are disabled (nIEN) and IRQ14 stays masked at
 //! the PIC; every command polls the status register with a bounded loop, so
 //! a missing or wedged drive returns an error instead of hanging the kernel.
 //! Each command runs under one lock with interrupts off, so the kernel init
-//! thread (flushing) and a syscall (reading evidence) never interleave on
-//! the ports.
+//! thread (flushing) and syscalls (reading evidence, file I/O) never
+//! interleave on the shared bus.
 //!
-//! Status: `partial` — used for the persistent ledger on QEMU's IDE disk;
-//! no DMA, no secondary bus, no LBA48.
+//! Status: `partial` — used for the persistent ledger and the file system
+//! on QEMU / Hyper-V IDE disks; no DMA, no secondary bus, no LBA48.
 
 use spin::Mutex;
 
@@ -38,6 +39,24 @@ const POLL_LIMIT: u32 = 2_000_000;
 
 pub const SECTOR_SIZE: usize = 512;
 
+/// A drive on the primary bus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Drive {
+    Master = 0,
+    Slave = 1,
+}
+
+impl Drive {
+    /// Drive/head register value selecting this drive (CHS form, IDENTIFY).
+    fn select_chs(self) -> u8 {
+        0xA0 | ((self as u8) << 4)
+    }
+    /// Drive/head register base with LBA mode set.
+    fn select_lba(self) -> u8 {
+        0xE0 | ((self as u8) << 4)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AtaError {
     NoDrive,
@@ -47,8 +66,8 @@ pub enum AtaError {
     OutOfRange,
 }
 
-/// The identified drive (LBA28 sector count), once `identify` succeeds.
-static DRIVE_SECTORS: Mutex<Option<u64>> = Mutex::new(None);
+/// Identified size of each drive (LBA28 sector count).
+static DRIVE_SECTORS: Mutex<[Option<u64>; 2]> = Mutex::new([None, None]);
 /// Serializes port access across threads and syscalls.
 static PORT_LOCK: Mutex<()> = Mutex::new(());
 
@@ -92,11 +111,11 @@ fn wait_drq() -> Result<(), AtaError> {
     Err(AtaError::Timeout)
 }
 
-/// Detect the primary master. Returns its size in sectors.
-pub fn identify() -> Result<u64, AtaError> {
+/// Detect `drive`. Returns its size in sectors.
+pub fn identify_on(drive: Drive) -> Result<u64, AtaError> {
     let sectors = with_ports(|| {
-        outb(CONTROL, 0x02); // nIEN: no interrupts from the drive
-        outb(DRIVE, 0xA0);
+        outb(CONTROL, 0x02); // nIEN: no interrupts from the drives
+        outb(DRIVE, drive.select_chs());
         settle();
         outb(SECTOR_COUNT, 0);
         outb(LBA_LO, 0);
@@ -104,7 +123,8 @@ pub fn identify() -> Result<u64, AtaError> {
         outb(LBA_HI, 0);
         outb(STATUS_CMD, CMD_IDENTIFY);
         settle();
-        if inb(STATUS_CMD) == 0 {
+        let s = inb(STATUS_CMD);
+        if s == 0 || s == 0xFF {
             return Err(AtaError::NoDrive);
         }
         wait_not_busy()?;
@@ -118,23 +138,23 @@ pub fn identify() -> Result<u64, AtaError> {
         }
         Ok(id[60] as u64 | ((id[61] as u64) << 16))
     })?;
-    *DRIVE_SECTORS.lock() = Some(sectors);
+    DRIVE_SECTORS.lock()[drive as usize] = Some(sectors);
     Ok(sectors)
 }
 
-/// Sectors on the identified drive (None before `identify` succeeded).
-pub fn sectors() -> Option<u64> {
-    *DRIVE_SECTORS.lock()
+/// Sectors on `drive` (None before `identify_on` succeeded).
+pub fn sectors_on(drive: Drive) -> Option<u64> {
+    DRIVE_SECTORS.lock()[drive as usize]
 }
 
-fn select(lba: u64, cmd: u8) -> Result<(), AtaError> {
-    match sectors() {
+fn select(drive: Drive, lba: u64, cmd: u8) -> Result<(), AtaError> {
+    match sectors_on(drive) {
         Some(n) if lba < n && lba < (1 << 28) => {}
         Some(_) => return Err(AtaError::OutOfRange),
         None => return Err(AtaError::NoDrive),
     }
     wait_not_busy()?;
-    outb(DRIVE, 0xE0 | ((lba >> 24) & 0x0F) as u8);
+    outb(DRIVE, drive.select_lba() | ((lba >> 24) & 0x0F) as u8);
     settle();
     outb(SECTOR_COUNT, 1);
     outb(LBA_LO, lba as u8);
@@ -145,9 +165,9 @@ fn select(lba: u64, cmd: u8) -> Result<(), AtaError> {
     Ok(())
 }
 
-pub fn read_sector(lba: u64, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), AtaError> {
+pub fn read_sector_on(drive: Drive, lba: u64, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), AtaError> {
     with_ports(|| {
-        select(lba, CMD_READ)?;
+        select(drive, lba, CMD_READ)?;
         wait_drq()?;
         for chunk in buf.chunks_exact_mut(2) {
             chunk.copy_from_slice(&inw(DATA).to_le_bytes());
@@ -156,9 +176,9 @@ pub fn read_sector(lba: u64, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), AtaError
     })
 }
 
-pub fn write_sector(lba: u64, buf: &[u8; SECTOR_SIZE]) -> Result<(), AtaError> {
+pub fn write_sector_on(drive: Drive, lba: u64, buf: &[u8; SECTOR_SIZE]) -> Result<(), AtaError> {
     with_ports(|| {
-        select(lba, CMD_WRITE)?;
+        select(drive, lba, CMD_WRITE)?;
         wait_drq()?;
         for chunk in buf.chunks_exact(2) {
             outw(DATA, u16::from_le_bytes([chunk[0], chunk[1]]));
@@ -172,13 +192,13 @@ pub fn write_sector(lba: u64, buf: &[u8; SECTOR_SIZE]) -> Result<(), AtaError> {
     })
 }
 
-/// Ask the drive to commit its write cache (QEMU: flush to the image).
-pub fn flush() -> Result<(), AtaError> {
+/// Ask `drive` to commit its write cache (QEMU: flush to the image).
+pub fn flush_on(drive: Drive) -> Result<(), AtaError> {
     with_ports(|| {
-        if sectors().is_none() {
+        if sectors_on(drive).is_none() {
             return Err(AtaError::NoDrive);
         }
-        outb(DRIVE, 0xE0);
+        outb(DRIVE, drive.select_lba());
         settle();
         outb(STATUS_CMD, CMD_FLUSH);
         settle();
@@ -188,4 +208,26 @@ pub fn flush() -> Result<(), AtaError> {
         }
         Ok(())
     })
+}
+
+// The evidence ledger's disk: the primary master.
+
+pub fn identify() -> Result<u64, AtaError> {
+    identify_on(Drive::Master)
+}
+
+pub fn sectors() -> Option<u64> {
+    sectors_on(Drive::Master)
+}
+
+pub fn read_sector(lba: u64, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), AtaError> {
+    read_sector_on(Drive::Master, lba, buf)
+}
+
+pub fn write_sector(lba: u64, buf: &[u8; SECTOR_SIZE]) -> Result<(), AtaError> {
+    write_sector_on(Drive::Master, lba, buf)
+}
+
+pub fn flush() -> Result<(), AtaError> {
+    flush_on(Drive::Master)
 }

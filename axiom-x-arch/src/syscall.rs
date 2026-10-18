@@ -35,6 +35,23 @@ pub const SYS_AX_SPAWN_MODULE: u64 = 520;
 pub const SYS_AX_PROC_LIST: u64 = 521;
 pub const PROC_ENTRY_BYTES: u64 = 48;
 
+/// Axiom-X file system (whole-file operations; see `fsys`):
+/// list (READ): entries of `FS_ENTRY_BYTES`: name[48], size u64, version
+/// u64, SHA-256[32]
+pub const SYS_AX_FS_LIST: u64 = 530;
+/// read(name, len, buf, buflen) (READ): copies up to buflen, returns size
+pub const SYS_AX_FS_READ: u64 = 531;
+/// write(name, len, data, datalen) (WRITE): create or replace atomically
+pub const SYS_AX_FS_WRITE: u64 = 532;
+/// delete(name, len) (WRITE)
+pub const SYS_AX_FS_DELETE: u64 = 533;
+/// install(module, len, path, len) (WRITE): copy a boot module into a file
+pub const SYS_AX_FS_INSTALL: u64 = 534;
+/// info(buf) (READ): root[32], generation u64, files u32, writable u32,
+/// free sectors u64
+pub const SYS_AX_FS_INFO: u64 = 535;
+pub const FS_ENTRY_BYTES: u64 = 96;
+
 /// Echo every syscall decision to the console (the ledger records them
 /// regardless). On for the boot self-tests; the shell turns it off.
 pub static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
@@ -76,6 +93,16 @@ pub type SpawnHook = fn(name: &str, parent: u32, rights: axiom_x_capability::Rig
 /// Frees what a reaped process owned (address space, kernel stack);
 /// returns frames freed. Implemented by the boot crate, which owns memory.
 pub type ReleaseHook = fn(&crate::process::Process) -> u64;
+
+/// Bytes of a boot module by name (for `AX_FS_INSTALL`); `None` if absent
+/// or not installable (e.g. the signing key).
+pub type ModuleBytesHook = fn(name: &str) -> Option<&'static [u8]>;
+
+static MODULE_BYTES_HOOK: Once<ModuleBytesHook> = Once::new();
+
+pub fn set_module_bytes_hook(hook: ModuleBytesHook) {
+    MODULE_BYTES_HOOK.call_once(|| hook);
+}
 
 static PROCESS_END_HOOK: Once<ProcessEndHook> = Once::new();
 static SPAWN_HOOK: Once<SpawnHook> = Once::new();
@@ -177,6 +204,12 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
             }
         },
         SYS_AX_PROC_LIST => sys_proc_list(a0, a1),
+        SYS_AX_FS_LIST => sys_fs_list(a0, a1),
+        SYS_AX_FS_INFO => sys_fs_info(a0),
+        SYS_AX_FS_READ => sys_fs_read(a0, a1, a2, frame.r10),
+        SYS_AX_FS_WRITE => sys_fs_write(pid, a0, a1, a2, frame.r10),
+        SYS_AX_FS_DELETE => sys_fs_delete(pid, a0, a1),
+        SYS_AX_FS_INSTALL => sys_fs_install(pid, a0, a1, a2, frame.r10),
         SYS_EXIT => {
             log_syscall(pid, "exit", nr, a0, 0);
             mark_ended(a0 as i32);
@@ -264,6 +297,13 @@ fn sys_spawn_module(parent: u32, name_ptr: u64, len: u64, rights_bits: u64) -> i
     use axiom_x_capability::Rights;
     let requested = Rights::new(rights_bits);
     let held = crate::governance::rights_of(parent);
+    if name_ptr != 0 && len > 0 && user_range_accessible(name_ptr, 1, false)
+        && unsafe { *(name_ptr as *const u8) } == b'/' && !held.contains(Rights::READ)
+    {
+        // Running a file means reading it.
+        crate::governance::record_create(parent, 0, requested, false, -EPERM);
+        return -EPERM;
+    }
     if !held.contains(requested) {
         // Escalation: asking for rights the parent does not hold.
         crate::governance::record_create(parent, 0, requested, false, -EPERM);
@@ -427,6 +467,128 @@ fn sys_read(fd: u64, buf: u64, len: u64) -> Option<i64> {
     Some(n as i64)
 }
 
+/// Copy a name (module or path) from user memory: 1..=MAX_MODULE_NAME
+/// bytes of UTF-8.
+fn copy_name(ptr: u64, len: u64, buf: &mut [u8; MAX_MODULE_NAME as usize]) -> Result<&str, i64> {
+    if len == 0 || len > MAX_MODULE_NAME {
+        return Err(-EINVAL);
+    }
+    if !user_range_accessible(ptr, len, false) {
+        return Err(-EFAULT);
+    }
+    let n = len as usize;
+    unsafe { core::ptr::copy_nonoverlapping(ptr as *const u8, buf.as_mut_ptr(), n) };
+    core::str::from_utf8(&buf[..n]).map_err(|_| -EINVAL)
+}
+
+fn sys_fs_list(buf: u64, max: u64) -> i64 {
+    let max = max.min(64);
+    if max == 0 {
+        return 0;
+    }
+    if !user_range_accessible(buf, max * FS_ENTRY_BYTES, true) {
+        return -EFAULT;
+    }
+    let r = crate::fsys::for_each_entry(max as usize, |i, e| {
+        let mut b = [0u8; FS_ENTRY_BYTES as usize];
+        b[0..48].copy_from_slice(&e.name);
+        b[48..56].copy_from_slice(&e.size.to_le_bytes());
+        b[56..64].copy_from_slice(&e.version.to_le_bytes());
+        b[64..96].copy_from_slice(&e.digest);
+        // Validated above for `max` entries (current CR3).
+        unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), (buf + i as u64 * FS_ENTRY_BYTES) as *mut u8, b.len()) };
+    });
+    match r {
+        Ok(n) => n as i64,
+        Err(e) => e,
+    }
+}
+
+fn sys_fs_info(buf: u64) -> i64 {
+    if !user_range_accessible(buf, 56, true) {
+        return -EFAULT;
+    }
+    let Some((root, generation, files, free, writable)) = crate::fsys::info() else {
+        return -crate::fsys::errno::EIO;
+    };
+    let mut b = [0u8; 56];
+    b[0..32].copy_from_slice(&root);
+    b[32..40].copy_from_slice(&generation.to_le_bytes());
+    b[40..44].copy_from_slice(&files.to_le_bytes());
+    b[44..48].copy_from_slice(&(writable as u32).to_le_bytes());
+    b[48..56].copy_from_slice(&free.to_le_bytes());
+    unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), buf as *mut u8, 56) };
+    0
+}
+
+fn sys_fs_read(name_ptr: u64, name_len: u64, buf: u64, len: u64) -> i64 {
+    let mut nb = [0u8; MAX_MODULE_NAME as usize];
+    let name = match copy_name(name_ptr, name_len, &mut nb) {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    let len = len.min(axiom_x_fs::MAX_FILE_SIZE as u64);
+    if len > 0 && !user_range_accessible(buf, len, true) {
+        return -EFAULT;
+    }
+    // The destination is the caller's validated buffer (current CR3).
+    let out = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len as usize) };
+    match crate::fsys::read(name, out) {
+        Ok(size) => size as i64,
+        Err(e) => e,
+    }
+}
+
+fn sys_fs_write(pid: u32, name_ptr: u64, name_len: u64, data: u64, len: u64) -> i64 {
+    let mut nb = [0u8; MAX_MODULE_NAME as usize];
+    let name = match copy_name(name_ptr, name_len, &mut nb) {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    if len > axiom_x_fs::MAX_FILE_SIZE as u64 {
+        return -crate::fsys::errno::EFBIG;
+    }
+    if len > 0 && !user_range_accessible(data, len, false) {
+        return -EFAULT;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(data as *const u8, len as usize) };
+    match crate::fsys::write(pid, name, bytes) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
+}
+
+fn sys_fs_delete(pid: u32, name_ptr: u64, name_len: u64) -> i64 {
+    let mut nb = [0u8; MAX_MODULE_NAME as usize];
+    match copy_name(name_ptr, name_len, &mut nb) {
+        Ok(name) => match crate::fsys::delete(pid, name) {
+            Ok(()) => 0,
+            Err(e) => e,
+        },
+        Err(e) => e,
+    }
+}
+
+fn sys_fs_install(pid: u32, mod_ptr: u64, mod_len: u64, path_ptr: u64, path_len: u64) -> i64 {
+    let mut mb = [0u8; MAX_MODULE_NAME as usize];
+    let mut pb = [0u8; MAX_MODULE_NAME as usize];
+    let module = match copy_name(mod_ptr, mod_len, &mut mb) {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    let path = match copy_name(path_ptr, path_len, &mut pb) {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    let Some(bytes) = MODULE_BYTES_HOOK.get().and_then(|h| h(module)) else {
+        return -ENOENT;
+    };
+    match crate::fsys::write(pid, path, bytes) {
+        Ok(()) => bytes.len() as i64,
+        Err(e) => e,
+    }
+}
+
 /// `AX_PROC_LIST(buf, max)`: up to `max` entries of `PROC_ENTRY_BYTES`:
 /// pid u32, parent u32 (0 = kernel), state u32, pad, rights u64, name[16],
 /// pad[8]. Returns the number written.
@@ -480,6 +642,12 @@ fn name_of(nr: u64) -> &'static str {
         SYS_READ => "read",
         SYS_WRITE => "write",
         SYS_AX_PROC_LIST => "ax_proc_list",
+        SYS_AX_FS_LIST => "ax_fs_list",
+        SYS_AX_FS_INFO => "ax_fs_info",
+        SYS_AX_FS_READ => "ax_fs_read",
+        SYS_AX_FS_WRITE => "ax_fs_write",
+        SYS_AX_FS_DELETE => "ax_fs_delete",
+        SYS_AX_FS_INSTALL => "ax_fs_install",
         SYS_EXIT => "exit",
         SYS_GETPID => "getpid",
         SYS_SCHED_YIELD => "sched_yield",

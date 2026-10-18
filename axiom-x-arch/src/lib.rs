@@ -25,6 +25,7 @@ pub mod governance;
 pub mod ata;
 pub mod clock;
 pub mod console;
+pub mod fsys;
 
 pub use process::*;
 pub use interrupts::*;

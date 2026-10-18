@@ -9,6 +9,7 @@ repository = { workspace = true }
 axiom-x-math = { path = "../axiom-x-math", default-features = false }
 axiom-x-capability = { path = "../axiom-x-capability", default-features = false }
 axiom-x-ledger = { path = "../axiom-x-ledger" }
+axiom-x-fs = { path = "../axiom-x-fs" }
 x86_64 = { workspace = true, features = ["abi_x86_interrupt"] }
 bitflags = { workspace = true }
 heapless = { workspace = true }

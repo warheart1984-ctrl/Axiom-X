@@ -8,6 +8,11 @@
 //!     the chain from genesis, the latest checkpoint signature, and every
 //!     archived checkpoint (signed by the key, monotonic, a prefix of the
 //!     current chain)
+//! ledger-tool fs-verify <fs-image> <ledger-image> <pubkey>
+//!     verify the ledger as above, then the AXFS image: superblock, file
+//!     table against its root hash, every file against its SHA-256, and
+//!     that the root equals the newest file-system anchor (FS_COMMIT, or
+//!     FS_MOUNT with decision ALLOW) in the verified ledger
 //! ledger-tool forge <disk-image> <seq>
 //!     TEST ONLY: rewrite record <seq> and rebuild a self-consistent chain
 //!     and superblock, keeping the old signature (what an attacker without
@@ -82,14 +87,20 @@ fn cmd_pubkey(seed_path: &str) -> ExitCode {
 }
 
 fn cmd_verify(image: &str, pubkey: &str, raw: bool) -> ExitCode {
+    match verify_ledger(image, pubkey, raw) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(c) => c,
+    }
+}
+
+/// Verify a ledger image; on success return it (journal applied unless
+/// `raw`) and its record count.
+fn verify_ledger(image: &str, pubkey: &str, raw: bool) -> Result<(Vec<u8>, u64), ExitCode> {
     let Some(trusted) = unhex32(pubkey) else {
         eprintln!("public key must be 64 hex characters");
-        return ExitCode::from(2);
+        return Err(ExitCode::from(2));
     };
-    let mut img = match read_image(image) {
-        Ok(b) => b,
-        Err(c) => return c,
-    };
+    let mut img = read_image(image)?;
 
     // Pending journal: replay it virtually, exactly as boot recovery would.
     if let (Some(h), Some(data)) = (
@@ -112,7 +123,7 @@ fn cmd_verify(image: &str, pubkey: &str, raw: bool) -> ExitCode {
         Pick::Use(sb, which) => (sb, which),
         other => {
             println!("FAIL: no usable superblock ({other:?})");
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
     };
     let c = sb.checkpoint;
@@ -138,16 +149,16 @@ fn cmd_verify(image: &str, pubkey: &str, raw: bool) -> ExitCode {
     println!("checkpoint signature: {sig:?}");
     if sig != SignatureStatus::Valid {
         println!("FAIL: latest checkpoint not signed by the trusted key {pubkey}");
-        return ExitCode::from(1);
+        return Err(ExitCode::from(1));
     }
     match chain {
         Err(seq) => {
             println!("FAIL: hash chain broken at record {seq}");
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
         Ok(head) if head != c.head => {
             println!("FAIL: chain head {} does not match the signed head", hex(&head));
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
         Ok(_) => {}
     }
@@ -162,7 +173,7 @@ fn cmd_verify(image: &str, pubkey: &str, raw: bool) -> ExitCode {
         Ok(n) => println!("checkpoint archive: {n} signed checkpoints verified; each is a prefix of the current chain"),
         Err((i, why)) => {
             println!("FAIL: archived checkpoint {i}: {why:?}");
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
     }
 
@@ -185,7 +196,128 @@ fn cmd_verify(image: &str, pubkey: &str, raw: bool) -> ExitCode {
         "PASS: {} records verified from genesis ({} BOOT records, {} denies); latest and {} archived checkpoints signed by {}",
         c.total, boots, denies, sb.archived, pubkey
     );
-    ExitCode::SUCCESS
+    Ok((img, c.total))
+}
+
+/// A disk image in memory, as an AXFS block device.
+struct ImageDev(Vec<u8>);
+
+impl axiom_x_fs::BlockDev for ImageDev {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; axiom_x_fs::SECTOR]) -> Result<(), ()> {
+        let o = lba as usize * axiom_x_fs::SECTOR;
+        buf.copy_from_slice(self.0.get(o..o + axiom_x_fs::SECTOR).ok_or(())?);
+        Ok(())
+    }
+    fn write_sector(&mut self, _: u64, _: &[u8; axiom_x_fs::SECTOR]) -> Result<(), ()> {
+        Err(()) // read-only: verification never changes the image
+    }
+    fn flush(&mut self) -> Result<(), ()> {
+        Ok(())
+    }
+    fn sectors(&self) -> u64 {
+        (self.0.len() / axiom_x_fs::SECTOR) as u64
+    }
+}
+
+/// Root hash carried by a file-system ledger record (see the kernel's `fsys`).
+fn fs_root_of(r: &Record) -> Digest {
+    let mut d = [0u8; 32];
+    for (i, v) in [r.nr, r.arg, r.rights, r.result as u64].iter().enumerate() {
+        d[i * 8..i * 8 + 8].copy_from_slice(&v.to_le_bytes());
+    }
+    d
+}
+
+fn cmd_fs_verify(fs_image: &str, ledger_image: &str, pubkey: &str) -> ExitCode {
+    use axiom_x_fs::{Fs, MountError};
+    use axiom_x_ledger::{decision, kind};
+    println!("== ledger {ledger_image}");
+    let (ledger, total) = match verify_ledger(ledger_image, pubkey, false) {
+        Ok(v) => v,
+        Err(c) => {
+            println!("FAIL: the ledger does not verify, so it cannot vouch for the file system");
+            return c;
+        }
+    };
+    println!("== file system {fs_image}");
+    let img = match read_image(fs_image) {
+        Ok(b) => b,
+        Err(c) => return c,
+    };
+    let mut fs = match Fs::mount(ImageDev(img)) {
+        Ok(fs) => fs,
+        Err(MountError::TableCorrupt) => {
+            println!("FAIL: file table does not match the root hash in the superblock");
+            return ExitCode::from(1);
+        }
+        Err(e) => {
+            println!("FAIL: not a mountable AXFS image ({e:?})");
+            return ExitCode::from(1);
+        }
+    };
+    let sb = fs.superblock();
+    println!(
+        "superblock: generation {}, {} files, table at sector {}, {} of {} sectors used; table matches root {}",
+        sb.generation,
+        sb.files,
+        sb.table_sector,
+        sb.next_free,
+        sb.total_sectors,
+        hex(&sb.root)
+    );
+    let entries: Vec<_> = fs.entries().copied().collect();
+    for e in &entries {
+        println!("  {:>8} bytes  v{:<3} sha256 {}  {}", e.size, e.version, hex(&e.digest), e.name());
+    }
+    if let Err(name) = fs.verify_all() {
+        let n = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+        println!("FAIL: file '{}' does not match its SHA-256", String::from_utf8_lossy(&name[..n]));
+        return ExitCode::from(1);
+    }
+    println!("files: all {} verified against their SHA-256", entries.len());
+
+    let (mut commits, mut mounts, mut refused) = (0, 0, 0);
+    let mut newest = None;
+    for seq in 0..total {
+        let (r, _) = slot(&ledger, seq).unwrap();
+        let anchor = match r.kind {
+            kind::FS_COMMIT => {
+                commits += 1;
+                true
+            }
+            kind::FS_MOUNT if r.decision == decision::ALLOW => {
+                mounts += 1;
+                true
+            }
+            kind::FS_MOUNT => {
+                refused += 1;
+                println!("  FS_MOUNT DENY #{seq}: mounted read-only (root {}..)", &hex(&fs_root_of(&r))[..16]);
+                false
+            }
+            _ => false,
+        };
+        if anchor {
+            newest = Some((seq, fs_root_of(&r)));
+        }
+    }
+    println!("ledger anchors: {commits} FS_COMMIT, {mounts} FS_MOUNT allowed, {refused} FS_MOUNT refused");
+    match newest {
+        None => {
+            println!("FAIL: the ledger holds no file-system anchor");
+            ExitCode::from(1)
+        }
+        Some((seq, root)) if root == sb.root => {
+            println!(
+                "PASS: file system root {} is the newest ledger anchor (record #{seq}), signed chain verified",
+                hex(&sb.root)
+            );
+            ExitCode::SUCCESS
+        }
+        Some((seq, root)) => {
+            println!("FAIL: newest ledger anchor (record #{seq}) is root {}; the image was changed or rolled back", hex(&root));
+            ExitCode::from(1)
+        }
+    }
 }
 
 fn cmd_forge(image: &str, seq: &str) -> ExitCode {
@@ -244,9 +376,10 @@ fn main() -> ExitCode {
         [_, "verify", image, pk] => cmd_verify(image, pk, false),
         [_, "verify", image, pk, "--raw"] => cmd_verify(image, pk, true),
         [_, "forge", image, seq] => cmd_forge(image, seq),
+        [_, "fs-verify", fs, ledger, pk] => cmd_fs_verify(fs, ledger, pk),
         _ => {
             eprintln!(
-                "usage: ledger-tool pubkey <seed-file> | verify <disk-image> <pubkey-hex> [--raw] | forge <disk-image> <seq>"
+                "usage: ledger-tool pubkey <seed-file> | verify <disk-image> <pubkey-hex> [--raw] | fs-verify <fs-image> <ledger-image> <pubkey-hex> | forge <disk-image> <seq>"
             );
             ExitCode::from(2)
         }

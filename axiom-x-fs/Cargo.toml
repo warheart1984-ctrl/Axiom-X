@@ -1,0 +1,10 @@
+[package]
+name = "axiom-x-fs"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+description = "Copy-on-write, hash-verified file system for Axiom-X (no_std, host-tested)"
+
+[dependencies]
+axiom-x-ledger = { path = "../axiom-x-ledger" }

@@ -1,0 +1,5 @@
+df
+cat log.txt
+run /bin/hello
+write x.txt nope
+rm log.txt

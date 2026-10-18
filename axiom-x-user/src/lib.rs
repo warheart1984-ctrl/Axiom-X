@@ -30,6 +30,14 @@ pub mod nr {
     pub const AX_SPAWN_MODULE: u64 = 520;
     /// Axiom-X `AxGetEvidence`: read a ledger record (needs `Rights::EVIDENCE`).
     pub const AX_GET_EVIDENCE: u64 = 501;
+    /// Axiom-X file system: list / read / info need `Rights::READ`;
+    /// write / delete / install need `Rights::WRITE`.
+    pub const AX_FS_LIST: u64 = 530;
+    pub const AX_FS_READ: u64 = 531;
+    pub const AX_FS_WRITE: u64 = 532;
+    pub const AX_FS_DELETE: u64 = 533;
+    pub const AX_FS_INSTALL: u64 = 534;
+    pub const AX_FS_INFO: u64 = 535;
 }
 
 /// errno values the kernel returns (negated).
@@ -38,7 +46,12 @@ pub mod errno {
     pub const ENOENT: i64 = 2;
     pub const ENOEXEC: i64 = 8;
     pub const ECHILD: i64 = 10;
+    pub const EIO: i64 = 5;
+    pub const EFAULT: i64 = 14;
     pub const EINVAL: i64 = 22;
+    pub const EFBIG: i64 = 27;
+    pub const ENOSPC: i64 = 28;
+    pub const EROFS: i64 = 30;
 
     pub fn name(e: i64) -> &'static str {
         match -e {
@@ -47,6 +60,11 @@ pub mod errno {
             ENOEXEC => "ENOEXEC",
             ECHILD => "ECHILD",
             EINVAL => "EINVAL",
+            EIO => "EIO",
+            EFAULT => "EFAULT",
+            EFBIG => "EFBIG",
+            ENOSPC => "ENOSPC",
+            EROFS => "EROFS",
             _ => "?",
         }
     }
@@ -69,6 +87,107 @@ pub unsafe fn syscall3(nr: u64, a0: u64, a1: u64, a2: u64) -> i64 {
         options(nostack)
     );
     ret
+}
+
+/// Raw four-argument system call (fourth argument in R10, as on Linux).
+///
+/// # Safety
+/// Pointer arguments must be valid for the call `nr` makes with them.
+#[inline(always)]
+pub unsafe fn syscall4(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
+    let ret: i64;
+    asm!(
+        "int 0x80",
+        inlateout("rax") nr as i64 => ret,
+        in("rdi") a0,
+        in("rsi") a1,
+        in("rdx") a2,
+        in("r10") a3,
+        options(nostack)
+    );
+    ret
+}
+
+/// One file as listed by `fs_list`.
+#[derive(Clone, Copy)]
+pub struct FileInfo {
+    pub name: [u8; 48],
+    pub size: u64,
+    pub version: u64,
+    pub digest: [u8; 32],
+}
+
+impl FileInfo {
+    pub const EMPTY: Self = Self { name: [0; 48], size: 0, version: 0, digest: [0; 32] };
+    pub fn name(&self) -> &str {
+        let n = self.name.iter().position(|&b| b == 0).unwrap_or(48);
+        core::str::from_utf8(&self.name[..n]).unwrap_or("?")
+    }
+}
+
+/// Files, up to `out.len()` (at most 16 per call). Returns the count or `-errno`.
+pub fn fs_list(out: &mut [FileInfo]) -> i64 {
+    let max = out.len().min(16);
+    let mut buf = [0u8; 96 * 16];
+    let r = unsafe { syscall3(nr::AX_FS_LIST, buf.as_mut_ptr() as u64, max as u64, 0) };
+    if r < 0 {
+        return r;
+    }
+    for (i, o) in out.iter_mut().enumerate().take(r as usize) {
+        let b = &buf[i * 96..i * 96 + 96];
+        o.name.copy_from_slice(&b[0..48]);
+        o.size = u64::from_le_bytes(b[48..56].try_into().unwrap());
+        o.version = u64::from_le_bytes(b[56..64].try_into().unwrap());
+        o.digest.copy_from_slice(&b[64..96]);
+    }
+    r
+}
+
+/// Read file `name` into `buf` (hash-verified by the kernel): returns the
+/// file's full size (may exceed `buf.len()`) or `-errno`.
+pub fn fs_read(name: &str, buf: &mut [u8]) -> i64 {
+    unsafe {
+        syscall4(nr::AX_FS_READ, name.as_ptr() as u64, name.len() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+    }
+}
+
+/// Create or atomically replace file `name` with `data`.
+pub fn fs_write(name: &str, data: &[u8]) -> i64 {
+    unsafe { syscall4(nr::AX_FS_WRITE, name.as_ptr() as u64, name.len() as u64, data.as_ptr() as u64, data.len() as u64) }
+}
+
+pub fn fs_delete(name: &str) -> i64 {
+    unsafe { syscall3(nr::AX_FS_DELETE, name.as_ptr() as u64, name.len() as u64, 0) }
+}
+
+/// Copy boot module `module` into file `path`; returns its size or `-errno`.
+pub fn fs_install(module: &str, path: &str) -> i64 {
+    unsafe {
+        syscall4(nr::AX_FS_INSTALL, module.as_ptr() as u64, module.len() as u64, path.as_ptr() as u64, path.len() as u64)
+    }
+}
+
+pub struct FsInfo {
+    pub root: [u8; 32],
+    pub generation: u64,
+    pub files: u32,
+    pub writable: bool,
+    pub free_sectors: u64,
+}
+
+pub fn fs_info() -> Result<FsInfo, i64> {
+    let mut b = [0u8; 56];
+    let r = unsafe { syscall3(nr::AX_FS_INFO, b.as_mut_ptr() as u64, 0, 0) };
+    if r < 0 {
+        return Err(r);
+    }
+    Ok(FsInfo {
+        root: b[0..32].try_into().unwrap(),
+        generation: u64::from_le_bytes(b[32..40].try_into().unwrap()),
+        files: u32::from_le_bytes(b[40..44].try_into().unwrap()),
+        writable: u32::from_le_bytes(b[44..48].try_into().unwrap()) != 0,
+        free_sectors: u64::from_le_bytes(b[48..56].try_into().unwrap()),
+    })
 }
 
 /// `read(fd, buf)`: blocks until at least one byte is available (fd 0 =

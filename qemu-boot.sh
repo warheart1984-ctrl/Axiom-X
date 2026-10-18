@@ -76,6 +76,12 @@ grub-mkrescue -o evidence/axiom-x-dbg.iso evidence/iso >/dev/null 2>&1
 LEDGER_DISK="${LEDGER_DISK:-evidence/ledger.img}"
 [ -f "$LEDGER_DISK" ] || truncate -s 4M "$LEDGER_DISK"
 
+# File system (AXFS): a raw disk on the primary IDE slave. A blank image is
+# formatted on first boot; its root hash is anchored in the ledger above,
+# so keep each FS image with the ledger it was used with.
+FS_DISK="${FS_DISK:-evidence/fs.img}"
+[ -f "$FS_DISK" ] || truncate -s 16M "$FS_DISK"
+
 # SHELL_INPUT=<file>: scripted session. The file is fed to COM1 (the
 # shell's console), output goes to evidence/serial-mb2.log, and a QEMU
 # monitor socket (/tmp/axiomx-mon.sock: Unix sockets cannot live on the
@@ -85,6 +91,7 @@ if [ -n "${SHELL_INPUT:-}" ]; then
     rm -f /tmp/axiomx-mon.sock
     timeout "$SECS" qemu-system-x86_64 -cdrom evidence/axiom-x-dbg.iso -boot d \
         -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
+        -drive "file=$FS_DISK,format=raw,if=ide,index=1,media=disk,cache=writethrough" \
         -serial stdio -display none -no-reboot -m 256M \
         -monitor unix:/tmp/axiomx-mon.sock,server,nowait \
         < "$SHELL_INPUT" > evidence/serial-mb2.log 2>evidence/tmp/qemu-stderr.log || true
@@ -99,6 +106,7 @@ if [ "${LIVE:-0}" = 1 ]; then
     echo "=== booting Axiom-X (live serial console; press Ctrl-C to stop the VM) ==="
     qemu-system-x86_64 -cdrom evidence/axiom-x-dbg.iso -boot d \
         -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
+        -drive "file=$FS_DISK,format=raw,if=ide,index=1,media=disk,cache=writethrough" \
         -serial stdio -display none -no-reboot -m 256M || true
     echo
     echo "=== VM stopped ==="
@@ -107,6 +115,7 @@ fi
 
 timeout "$SECS" qemu-system-x86_64 -cdrom evidence/axiom-x-dbg.iso -boot d \
     -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
+    -drive "file=$FS_DISK,format=raw,if=ide,index=1,media=disk,cache=writethrough" \
     -serial file:evidence/serial-mb2.log -display none -no-reboot \
     -d int,cpu_reset -D evidence/qemu-mb2.log -m 256M || true
 
