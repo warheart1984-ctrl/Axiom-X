@@ -97,6 +97,15 @@ pub fn schedule(frame_rsp: u64) -> u64 {
     let Some(mut procs) = process_table().try_lock_processes() else {
         return frame_rsp;
     };
+    // Wake sleepers whose deadline has passed.
+    let now = TICKS.load(Ordering::Relaxed);
+    for p in procs.iter_mut() {
+        if p.state == ProcessState::Blocked && p.wake_tick != 0 && p.wake_tick <= now {
+            p.wake_tick = 0;
+            p.state = ProcessState::Runnable;
+        }
+    }
+
     let cur = current_pid();
     let cur_idx = procs.iter().position(|p| p.pid == cur);
     if let Some(i) = cur_idx {
@@ -206,6 +215,20 @@ pub fn start(pid: u32) -> ! {
     };
     activate(pid, root, kstack);
     unsafe { resume_frame(rsp) }
+}
+
+/// PIT period: the scheduler's time unit.
+pub const TICK_NS: u64 = 10_000_000;
+
+/// Block the current thread until `ticks` timer ticks from now. The caller
+/// (a syscall) must then switch away with `schedule`.
+pub fn block_current_for(ticks: u64) {
+    let wake = TICKS.load(Ordering::Relaxed) + ticks.max(1);
+    if let Some(mut g) = process_table().get_mut(current_pid()) {
+        let p = g.get_mut();
+        p.wake_tick = wake;
+        p.state = ProcessState::Blocked;
+    }
 }
 
 /// End the current thread (it must not run again) and switch to the next.

@@ -7,6 +7,7 @@
 
 use core::arch::asm;
 use core::arch::naked_asm;
+use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicU32, Ordering};
 use heapless::Vec;
 use spin::Mutex;
@@ -147,6 +148,8 @@ pub struct Process {
     /// Kernel RSP pointing at this thread's saved `TrapFrame` while it is
     /// not running (see `sched`).
     pub saved_rsp: u64,
+    /// While `Blocked` in `nanosleep`: the PIT tick at which to wake (0 = none).
+    pub wake_tick: u64,
 
     // Memory management
     pub page_table_root: PhysFrame<Size4KiB>,
@@ -191,11 +194,40 @@ pub struct SyscallRecord {
 }
 
 /// Global process table
+///
+/// One spinlock over the process slice; lookups scan by PID (at most
+/// `MAX_PROCESSES` entries). Every lock is taken with interrupts disabled
+/// and released before they are restored: a thread preempted while holding
+/// the lock would otherwise deadlock any syscall that needs it, since
+/// syscalls run with interrupts off and spin forever.
 pub struct ProcessTable {
     next_pid: AtomicU32,
     processes: Mutex<Vec<Process, MAX_PROCESSES>>,
-    /// PID to index mapping (for O(1) lookup)
-    pid_to_index: Mutex<Vec<(u32, usize), MAX_PROCESSES>>,
+}
+
+/// Disable interrupts, returning whether they were enabled.
+#[inline]
+fn irq_save() -> bool {
+    #[cfg(target_os = "none")]
+    {
+        let was = x86_64::instructions::interrupts::are_enabled();
+        x86_64::instructions::interrupts::disable();
+        was
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        false
+    }
+}
+
+#[inline]
+fn irq_restore(was_enabled: bool) {
+    #[cfg(target_os = "none")]
+    if was_enabled {
+        x86_64::instructions::interrupts::enable();
+    }
+    #[cfg(not(target_os = "none"))]
+    let _ = was_enabled;
 }
 
 impl ProcessTable {
@@ -203,7 +235,6 @@ impl ProcessTable {
         Self {
             next_pid: AtomicU32::new(1),
             processes: Mutex::new(Vec::new()),
-            pid_to_index: Mutex::new(Vec::new()),
         }
     }
 
@@ -224,41 +255,51 @@ impl ProcessTable {
         self.next_pid.fetch_add(1, Ordering::SeqCst)
     }
 
+    /// Run `f` on the process vector under the lock, interrupts off.
+    fn locked<R>(&self, f: impl FnOnce(&mut Vec<Process, MAX_PROCESSES>) -> R) -> R {
+        let irq = irq_save();
+        let r = f(&mut self.processes.lock());
+        irq_restore(irq);
+        r
+    }
+
     /// Add a process to the table
     pub fn add_process(&self, mut proc: Process) -> Result<u32, &'static str> {
-        let mut processes = self.processes.lock();
-        let mut mapping = self.pid_to_index.lock();
-
-        if processes.len() >= MAX_PROCESSES {
-            return Err("process table full");
-        }
-
-        let pid = self.alloc_pid();
-        proc.pid = pid;
-        let index = processes.len();
-        processes.push(proc).map_err(|_| "processes push failed")?;
-        mapping.push((pid, index)).map_err(|_| "mapping push failed")?;
-
-        Ok(pid)
+        self.locked(|processes| {
+            if processes.len() >= MAX_PROCESSES {
+                return Err("process table full");
+            }
+            let pid = self.alloc_pid();
+            proc.pid = pid;
+            processes.push(proc).map_err(|_| "processes push failed")?;
+            Ok(pid)
+        })
     }
 
     /// Get mutable reference to process by PID
     pub fn get_mut(&self, pid: u32) -> Option<ProcessGuard> {
-        let mapping = self.pid_to_index.lock();
-        let index = mapping.iter().find(|(p, _)| *p == pid).map(|(_, i)| *i)?;
-        drop(mapping);
-
+        let irq = irq_save();
         let processes = self.processes.lock();
-        Some(ProcessGuard { processes, index })
+        match processes.iter().position(|p| p.pid == pid) {
+            Some(index) => Some(ProcessGuard { processes: ManuallyDrop::new(processes), index, irq }),
+            None => {
+                drop(processes);
+                irq_restore(irq);
+                None
+            }
+        }
     }
 
     /// Get process by index (for scheduler)
     pub fn get_by_index(&self, index: usize) -> Option<ProcessGuard> {
+        let irq = irq_save();
         let processes = self.processes.lock();
         if index >= processes.len() {
+            drop(processes);
+            irq_restore(irq);
             return None;
         }
-        Some(ProcessGuard { processes, index })
+        Some(ProcessGuard { processes: ManuallyDrop::new(processes), index, irq })
     }
 
     /// Lock the process slice without spinning. Interrupt handlers use this:
@@ -270,34 +311,36 @@ impl ProcessTable {
 
     /// Get process count
     pub fn count(&self) -> usize {
-        self.processes.lock().len()
+        self.locked(|p| p.len())
     }
 
     /// Access all processes under the table lock
     pub fn with_locked<R>(&self, f: impl FnOnce(&[Process]) -> R) -> R {
-        let processes = self.processes.lock();
-        f(&processes)
+        self.locked(|p| f(p))
     }
 
-    /// Remove terminated process
+    /// Remove a process record (e.g. a reaped zombie) and return it.
     pub fn remove(&self, pid: u32) -> Option<Process> {
-        let mut mapping = self.pid_to_index.lock();
-        let pos = mapping.iter().position(|(p, _)| *p == pid)?;
-        let (_, index) = mapping.remove(pos);
-        drop(mapping);
-
-        let mut processes = self.processes.lock();
-        if index >= processes.len() {
-            return None;
-        }
-        Some(processes.remove(index))
+        self.locked(|processes| {
+            let index = processes.iter().position(|p| p.pid == pid)?;
+            Some(processes.remove(index))
+        })
     }
 }
 
-/// Guard for process access (releases lock on drop)
+/// Guard for process access: holds the table lock with interrupts off;
+/// on drop releases the lock first, then restores the interrupt flag.
 pub struct ProcessGuard<'a> {
-    processes: spin::MutexGuard<'a, Vec<Process, MAX_PROCESSES>>,
+    processes: ManuallyDrop<spin::MutexGuard<'a, Vec<Process, MAX_PROCESSES>>>,
     index: usize,
+    irq: bool,
+}
+
+impl Drop for ProcessGuard<'_> {
+    fn drop(&mut self) {
+        unsafe { ManuallyDrop::drop(&mut self.processes) };
+        irq_restore(self.irq);
+    }
 }
 
 impl<'a> ProcessGuard<'a> {
@@ -511,6 +554,7 @@ pub fn init_kernel_process(
         time_slice_ns: 10_000_000,
         affinity: Some(0),
         saved_rsp: 0,
+        wake_tick: 0,
         page_table_root,
         kernel_stack_top: stack_top,
         user_stack_top: None,
@@ -545,6 +589,7 @@ pub fn init_user_process(
         time_slice_ns: 5_000_000,
         affinity: Some(0),
         saved_rsp: 0,
+        wake_tick: 0,
         page_table_root,
         kernel_stack_top,
         user_stack_top: Some(user_stack_top),

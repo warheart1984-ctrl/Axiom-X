@@ -19,10 +19,14 @@ use crate::process::{current_pid, ProcessState, SyscallRecord};
 use crate::sched::TrapFrame;
 
 pub const SYS_WRITE: u64 = 1;
+pub const SYS_SCHED_YIELD: u64 = 24;
+pub const SYS_NANOSLEEP: u64 = 35;
+pub const SYS_GETPID: u64 = 39;
 pub const SYS_EXIT: u64 = 60;
 
 pub const EBADF: i64 = 9;
 pub const EFAULT: i64 = 14;
+pub const EINVAL: i64 = 22;
 pub const ENOSYS: i64 = 38;
 
 /// Exclusive upper bound of the canonical lower (user) half.
@@ -73,11 +77,23 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
         SYS_EXIT => {
             log_syscall(pid, "exit", nr, a0, 0);
             mark_ended(a0 as i32);
-            return match crate::sched::schedule(frame_rsp) {
-                0 => idle_forever(),
-                rsp => rsp,
-            };
+            return switch_away(frame_rsp);
         }
+        SYS_GETPID => pid as i64,
+        SYS_SCHED_YIELD => {
+            frame.rax = 0;
+            return switch_away(frame_rsp);
+        }
+        SYS_NANOSLEEP => match sleep_ticks(a0) {
+            Ok(ticks) => {
+                // Result is written now: the frame is resumed after the wake.
+                frame.rax = 0;
+                log_syscall(pid, "nanosleep", nr, ticks, 0);
+                crate::sched::block_current_for(ticks);
+                return switch_away(frame_rsp);
+            }
+            Err(e) => e,
+        },
         _ => -ENOSYS,
     };
 
@@ -92,6 +108,29 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
     log_syscall(pid, name_of(nr), nr, a0, result);
     frame.rax = result as u64;
     frame_rsp
+}
+
+/// Leave the current thread (ended, sleeping, or yielding) and return the
+/// frame of whatever runs next.
+fn switch_away(frame_rsp: u64) -> u64 {
+    match crate::sched::schedule(frame_rsp) {
+        0 => idle_forever(),
+        rsp => rsp,
+    }
+}
+
+/// Validate a user `struct timespec { i64 tv_sec; i64 tv_nsec; }` and
+/// convert it to scheduler ticks (rounded up).
+fn sleep_ticks(ts_ptr: u64) -> Result<u64, i64> {
+    if !user_range_accessible(ts_ptr, 16, false) {
+        return Err(-EFAULT);
+    }
+    let (sec, nsec) = unsafe { (*(ts_ptr as *const i64), *((ts_ptr + 8) as *const i64)) };
+    if sec < 0 || !(0..1_000_000_000).contains(&nsec) {
+        return Err(-EINVAL);
+    }
+    let ns = (sec as u64).saturating_mul(1_000_000_000).saturating_add(nsec as u64);
+    Ok(ns.div_ceil(crate::sched::TICK_NS))
 }
 
 /// No thread is runnable: nothing left for the kernel to do.
@@ -120,6 +159,9 @@ fn name_of(nr: u64) -> &'static str {
     match nr {
         SYS_WRITE => "write",
         SYS_EXIT => "exit",
+        SYS_GETPID => "getpid",
+        SYS_SCHED_YIELD => "sched_yield",
+        SYS_NANOSLEEP => "nanosleep",
         _ => "unknown",
     }
 }

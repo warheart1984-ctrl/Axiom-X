@@ -48,6 +48,8 @@ macro_rules! serial_print {
 // Ring-3 programs (declared after `serial_print!` so it can use the macro).
 #[cfg(feature = "freestanding")]
 mod user;
+#[cfg(feature = "freestanding")]
+mod elf;
 
 // Movie subsystem
 pub mod movie;
@@ -83,6 +85,24 @@ pub struct MemoryRegion {
     pub base: u64,
     pub length: u64,
     pub region_type: u32, // multiboot2 memory type
+}
+
+/// Modules handed over by the bootloader, kept for init.
+static mut BOOT_MODULES: Vec<ModuleInfo, 16> = Vec::new();
+
+/// Modules handed over by the bootloader (physical ranges + names).
+pub fn boot_modules() -> &'static [ModuleInfo] {
+    unsafe { &*core::ptr::addr_of!(BOOT_MODULES) }
+}
+
+impl ModuleInfo {
+    pub fn name(&self) -> &str {
+        core::str::from_utf8(&self.name[..self.name_len.min(64)]).unwrap_or("?")
+    }
+    /// The module's bytes (physical memory, reached via the identity map).
+    pub fn bytes(&self) -> &'static [u8] {
+        unsafe { core::slice::from_raw_parts(self.start as *const u8, (self.end - self.start) as usize) }
+    }
 }
 
 /// Module loaded by bootloader
@@ -124,6 +144,8 @@ const KERNEL_STACK_REGION_END: u64 = 0xFFFF_8000_1000_0000;
 /// overflow hits the guard page and faults instead of corrupting memory.
 pub const KERNEL_STACK_SIZE: u64 = 64 * 1024;
 static mut NEXT_KERNEL_STACK: u64 = KERNEL_STACK_REGION;
+/// Guard-page addresses of freed stack slots, reused before bumping.
+static mut FREE_KERNEL_STACK_SLOTS: Vec<u64, 64> = Vec::new();
 
 /// Identity map the first 1 GiB
 const IDENTITY_MAP_LIMIT: u64 = 1 << 30; // 1 GiB
@@ -231,12 +253,23 @@ unsafe fn get_or_create_table(table: *mut PageTable, index: u64, user: bool) -> 
 /// Allocate and map a kernel stack below an unmapped guard page; returns
 /// its top. Stacks are never freed (bump allocation, like frames).
 pub fn alloc_kernel_stack() -> VirtAddr {
-    unsafe {
-        let guard = NEXT_KERNEL_STACK;
+    x86_64::instructions::interrupts::without_interrupts(|| unsafe { alloc_kernel_stack_inner() })
+}
+
+unsafe fn alloc_kernel_stack_inner() -> VirtAddr {
+    {
+        let slots = &mut *core::ptr::addr_of_mut!(FREE_KERNEL_STACK_SLOTS);
+        let guard = match slots.pop() {
+            Some(g) => g,
+            None => {
+                let g = NEXT_KERNEL_STACK;
+                NEXT_KERNEL_STACK = g + 4096 + KERNEL_STACK_SIZE;
+                g
+            }
+        };
         let base = guard + 4096;
         let top = base + KERNEL_STACK_SIZE;
         assert!(top <= KERNEL_STACK_REGION_END, "kernel stack region exhausted");
-        NEXT_KERNEL_STACK = top;
         let pml4 = KERNEL_PML4.expect("PML4 not initialized").start_address().as_u64() as *mut PageTable;
         for va in (base..top).step_by(4096) {
             let phys = alloc_boot_frame().expect("out of memory for kernel stack");
@@ -245,6 +278,82 @@ pub fn alloc_kernel_stack() -> VirtAddr {
                 PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE);
         }
         VirtAddr::new(top)
+    }
+}
+
+/// Unmap one 4 KiB kernel page from the shared kernel tables and return its
+/// frame. Every address space shares these tables; other CR3s flush the
+/// stale TLB entry on their next load (single CPU).
+unsafe fn unmap_kernel_page(virt: u64) -> Option<PhysFrame<Size4KiB>> {
+    let mut table = KERNEL_PML4?.start_address().as_u64() as *mut PageTable;
+    for shift in [39u64, 30, 21] {
+        let entry = &(&*table)[((virt >> shift) & 0x1FF) as usize];
+        if entry.is_unused() || entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+            return None;
+        }
+        table = entry.addr().as_u64() as *mut PageTable;
+    }
+    let entry = &mut (&mut *table)[((virt >> 12) & 0x1FF) as usize];
+    if entry.is_unused() {
+        return None;
+    }
+    let frame = PhysFrame::containing_address(entry.addr());
+    entry.set_unused();
+    x86_64::instructions::tlb::flush(VirtAddr::new(virt));
+    Some(frame)
+}
+
+/// Free a stack from `alloc_kernel_stack` (by its top) and recycle its slot.
+/// It must not be the stack currently in use.
+pub fn free_kernel_stack(top: VirtAddr) -> u64 {
+    x86_64::instructions::interrupts::without_interrupts(|| unsafe {
+        let base = top.as_u64() - KERNEL_STACK_SIZE;
+        let mut freed = 0;
+        for va in (base..top.as_u64()).step_by(4096) {
+            if let Some(f) = unmap_kernel_page(va) {
+                free_frame(f);
+                freed += 1;
+            }
+        }
+        let slots = &mut *core::ptr::addr_of_mut!(FREE_KERNEL_STACK_SLOTS);
+        let _ = slots.push(base - 4096);
+        freed
+    })
+}
+
+/// Free everything private to an address space from `new_address_space`:
+/// the user slot's page tables and the frames they map, then the PML4.
+/// The shared kernel half is not touched. It must not be the active CR3.
+pub fn free_address_space(root: PhysFrame<Size4KiB>) -> u64 {
+    unsafe fn free_level(table: u64, level: u8) -> u64 {
+        let mut freed = 0;
+        for entry in (&*(table as *const PageTable)).iter() {
+            if entry.is_unused() {
+                continue;
+            }
+            let frame = PhysFrame::containing_address(entry.addr());
+            if level > 1 && !entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+                freed += free_level(frame.start_address().as_u64(), level - 1);
+            }
+            free_frame(frame);
+            freed += 1;
+        }
+        freed
+    }
+    assert!(Cr3::read().0 != root, "freeing the active address space");
+    unsafe {
+        let pml4 = &mut *(root.start_address().as_u64() as *mut PageTable);
+        let mut freed = 0;
+        let user = &pml4[USER_PML4_SLOT];
+        if !user.is_unused() {
+            let pdpt = PhysFrame::<Size4KiB>::containing_address(user.addr());
+            // PDPT (level 3) -> PD (2) -> PT (1) -> leaf frames
+            freed += free_level(pdpt.start_address().as_u64(), 3);
+            free_frame(pdpt);
+            freed += 1;
+        }
+        free_frame(root);
+        freed + 1
     }
 }
 
@@ -272,28 +381,74 @@ pub fn map_page_in(root: PhysFrame<Size4KiB>, virt: u64, phys: u64, flags: PageT
 /// Boot-time frame allocator (bump allocator from available memory)
 static mut BOOT_FRAME_ALLOCATOR: Option<BootFrameAllocator> = None;
 
+/// Physical frame allocator: bump allocation from one usable region, plus a
+/// free list of returned frames (each free frame stores the next link in its
+/// first 8 bytes, reached through the identity map).
 struct BootFrameAllocator {
     current: u64,
     end: u64,
+    free_head: u64,
+    allocated: u64,
+    freed: u64,
 }
+
+/// Frames must be reachable through the boot identity map (first 1 GiB):
+/// page tables and the free list are accessed by physical address.
+const IDENTITY_MAPPED_END: u64 = 1 << 30;
 
 impl BootFrameAllocator {
     fn new(start: u64, end: u64) -> Self {
-        Self { current: start, end }
+        Self { current: start, end: end.min(IDENTITY_MAPPED_END), free_head: 0, allocated: 0, freed: 0 }
     }
 
     fn alloc(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        // The frame at `current` must be fully inside [start, end).
-        if self.current + 4096 > self.end {
-            return None;
-        }
-        let frame = PhysFrame::containing_address(PhysAddr::new(self.current));
-        self.current += 4096;
-        Some(frame)
+        let addr = if self.free_head != 0 {
+            let addr = self.free_head;
+            self.free_head = unsafe { ptr::read(addr as *const u64) };
+            addr
+        } else {
+            // The frame at `current` must be fully inside [start, end).
+            if self.current + 4096 > self.end {
+                return None;
+            }
+            let addr = self.current;
+            self.current += 4096;
+            addr
+        };
+        self.allocated += 1;
+        Some(PhysFrame::containing_address(PhysAddr::new(addr)))
+    }
+
+    fn free(&mut self, frame: PhysFrame<Size4KiB>) {
+        let addr = frame.start_address().as_u64();
+        unsafe { ptr::write(addr as *mut u64, self.free_head) };
+        self.free_head = addr;
+        self.freed += 1;
     }
 }
 
+/// Return a frame to the allocator. The caller guarantees nothing maps or
+/// uses it any more.
+pub unsafe fn free_frame(frame: PhysFrame<Size4KiB>) {
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        BOOT_FRAME_ALLOCATOR.as_mut().expect("frame allocator").free(frame)
+    });
+}
+
+/// Frames currently allocated (allocated minus freed).
+pub fn frames_in_use() -> u64 {
+    x86_64::instructions::interrupts::without_interrupts(|| unsafe {
+        BOOT_FRAME_ALLOCATOR.as_ref().map_or(0, |a| a.allocated - a.freed)
+    })
+}
+
 unsafe fn init_boot_allocator(boot_info: &BootInfo) {
+    // Never hand out the kernel image or the modules GRUB loaded after it.
+    let reserved_end = boot_info
+        .modules
+        .iter()
+        .map(|m| m.end)
+        .fold(boot_info.kernel_phys_end, u64::max);
     // Take the first usable region that has room, clamping the start past
     // the kernel image (the loader puts the image at 0x100000, inside the
     // first E820/GRUB usable region, so we can't require region.base >= end).
@@ -302,7 +457,7 @@ unsafe fn init_boot_allocator(boot_info: &BootInfo) {
             continue;
         }
         let region_end = region.base + region.length;
-        let alloc_start = region.base.max(boot_info.kernel_phys_end);
+        let alloc_start = region.base.max(reserved_end);
         let aligned = (alloc_start + 4095) & !4095;
         
         // Check if we have at least 1 MiB of space for boot allocations
@@ -319,7 +474,7 @@ unsafe fn init_boot_allocator(boot_info: &BootInfo) {
             continue;
         }
         let region_end = region.base + region.length;
-        let alloc_start = region.base.max(boot_info.kernel_phys_end);
+        let alloc_start = region.base.max(reserved_end);
         let aligned = (alloc_start + 4095) & !4095;
         
         const MIN_BOOT_ALLOC_SIZE_FALLBACK: u64 = 64 * 1024; // 64 KiB
@@ -333,7 +488,9 @@ unsafe fn init_boot_allocator(boot_info: &BootInfo) {
 }
 
 unsafe fn alloc_boot_frame() -> Option<PhysFrame<Size4KiB>> {
-    BOOT_FRAME_ALLOCATOR.as_mut()?.alloc()
+    // Interrupts off: init allocates while user threads run and fault/exit
+    // paths may free.
+    x86_64::instructions::interrupts::without_interrupts(|| BOOT_FRAME_ALLOCATOR.as_mut()?.alloc())
 }
 
 // ============================================================================
@@ -708,6 +865,10 @@ fn ax_kernel_entry_continue(boot_info: BootInfo) -> ! {
     // 1. Initialize early boot allocator
     serial_puts("Initializing boot allocator...\n");
     unsafe { init_boot_allocator(&boot_info); }
+    // Keep the module list (GRUB `module2` images, e.g. user ELF programs);
+    // their memory is reserved from the frame allocator above.
+    unsafe { BOOT_MODULES = boot_info.modules.clone(); }
+    serial_print!("  Boot modules: {}\n", boot_info.modules.len());
 
     // 2. Initialize early page tables
     serial_puts("Setting up page tables...\n");
@@ -764,7 +925,7 @@ extern "C" fn init_process() -> ! {
     #[cfg(feature = "freestanding")]
     {
         axiom_x_arch::syscall::set_process_end_hook(user::on_process_end);
-        user::spawn_all();
+        user::run_rounds();
     }
 
     // TODO: Mount root filesystem, start userspace init
