@@ -45,7 +45,7 @@ pub struct TrapFrame {
 /// RFLAGS for a new thread: IF=1 (bit 1 is reserved-set).
 const INITIAL_RFLAGS: u64 = 0x202;
 
-/// PIT ticks since boot.
+/// Scheduler ticks since boot (local APIC timer, or the PIT; 10 ms each).
 pub static TICKS: AtomicU64 = AtomicU64::new(0);
 /// Context switches performed.
 pub static SWITCHES: AtomicU64 = AtomicU64::new(0);
@@ -80,7 +80,7 @@ pub unsafe extern "C" fn timer_entry() -> ! {
 
 extern "C" fn timer_dispatch(frame_rsp: u64) -> u64 {
     // EOI first: the switch below may not come back to this thread soon.
-    crate::outb(0x20, 0x20);
+    crate::apic::tick_eoi();
     TICKS.fetch_add(1, Ordering::Relaxed);
     crate::console::poll_keyboard();
     // The interrupted thread was running, so it can always be resumed.

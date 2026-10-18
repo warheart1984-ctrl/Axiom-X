@@ -255,6 +255,9 @@ extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
     unsafe { asm!("out 0x20, al", in("al") 0x20u8); }
 }
 
+/// APIC spurious interrupt: no EOI (the APIC did not set an in-service bit).
+extern "x86-interrupt" fn apic_spurious_handler(_frame: InterruptStackFrame) {}
+
 /// IRQ4 is the first serial port on a PC (it was mislabeled "mouse").
 extern "x86-interrupt" fn com1_handler(_frame: InterruptStackFrame) {
     crate::console::on_serial_irq();
@@ -309,6 +312,13 @@ pub fn init_idt() -> &'static InterruptDescriptorTable {
         idt[0x21].set_handler_fn(keyboard_handler);   // IRQ1 - Keyboard
         idt[0x24].set_handler_fn(com1_handler);       // IRQ4 - COM1 receive
         idt[0x2E].set_handler_fn(ide_handler);        // IRQ14 - Primary IDE
+        // Local APIC timer: the same scheduler entry as IRQ0 (whichever is
+        // the tick source; `apic::tick_eoi` acknowledges the right device).
+        unsafe {
+            idt[crate::apic::TIMER_VECTOR]
+                .set_handler_addr(VirtAddr::new(crate::sched::timer_entry as *const () as u64));
+        }
+        idt[crate::apic::SPURIOUS_VECTOR].set_handler_fn(apic_spurious_handler);
 
         // int 0x80 system calls. DPL 3 so ring 3 may invoke it; no IST: the
         // CPU switches to TSS.RSP0 on the privilege change.

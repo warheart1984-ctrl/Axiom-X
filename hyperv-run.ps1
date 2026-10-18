@@ -7,18 +7,24 @@
     "Hyper-V Administrators". What it does, in order:
 
       1. Checks elevation and its inputs:
-           evidence\axiom-x-dbg.iso            (built by qemu-boot.sh; carries the
-                                                kernel, user programs, ledger key;
-                                                copied into evidence\hyperv\ per run)
+           evidence\axiom-x-hyperv.iso         (preferred: built for Hyper-V with a
+                                                fixed kernel command line, see below)
+           or evidence\axiom-x-dbg.iso         (qemu-boot.sh's last ISO: carries the
+                                                command line of the last QEMU run)
+                                                Either carries the kernel, user programs
+                                                and ledger key; copied into evidence\hyperv\
            evidence\hyperv\ledger-hyperv.vhd   (fixed VHD copy of evidence\ledger.img;
                                                 your real ledger.img is never touched)
-         and makes sure both are plain files: Hyper-V refuses compressed,
+           evidence\hyperv\fs-hyperv.vhd       (file-system disk; created blank, 16 MiB,
+                                                if missing; the kernel formats it)
+         and makes sure all are plain files: Hyper-V refuses compressed,
          encrypted or sparse disks. It turns NTFS compression off for
          evidence\hyperv\ only (the project tree is compressed).
       2. Creates VM "Axiom-X" (Generation 1 = BIOS + IDE + legacy COM ports):
            1 vCPU (the kernel is single-CPU), 256 MB static RAM, no network,
-           checkpoints off, DVD = the ISO (IDE 1:0), disk = the VHD on IDE 0:0
-           (primary master: where the kernel's ATA driver looks), boot order
+           checkpoints off, DVD = the ISO (IDE 1:0), ledger disk = the VHD on
+           IDE 0:0 (primary master), file-system disk on IDE 0:1 (primary
+           slave): where the kernel's ATA driver looks for each. Boot order
            CD first, COM1 -> named pipe \\.\pipe\axiomx-com1.
       3. Starts it, connects to the pipe, and copies the serial output to the
            console and to evidence\hyperv-serial-<date>.log for -Seconds seconds.
@@ -49,6 +55,13 @@
     from evidence\ledger.img before the run (raw disk + the existing VHD's
     512-byte footer), and copy the result back to evidence\ledger.img
     afterwards (the previous ledger.img is kept as ledger.img.before-hyperv).
+    Likewise the file system: evidence\fs.img (the FS image paired with that
+    ledger; blank if missing) goes into fs-hyperv.vhd and comes back after,
+    keeping fs.img.before-hyperv.
+.NOTES
+    Build the Hyper-V ISO (in WSL), e.g. with the boot self-tests on:
+      ISO_ONLY=1 ISO_OUT=evidence/axiom-x-hyperv.iso KERNEL_CMDLINE= sh ./qemu-boot.sh
+    or straight to the shell: KERNEL_CMDLINE=axiom.selftest=off
 
 .EXAMPLE
     # From an elevated PowerShell in the axiom-x folder:
@@ -67,10 +80,15 @@ $ErrorActionPreference = 'Stop'
 $VmName   = 'Axiom-X'
 $PipeName = 'axiomx-com1'
 $Root     = $PSScriptRoot
-$BuiltIso = Join-Path $Root 'evidence\axiom-x-dbg.iso'
+$HvIso    = Join-Path $Root 'evidence\axiom-x-hyperv.iso'
+$DbgIso   = Join-Path $Root 'evidence\axiom-x-dbg.iso'
+$BuiltIso = if (Test-Path -LiteralPath $HvIso) { $HvIso } else { $DbgIso }
 $HvDir    = Join-Path $Root 'evidence\hyperv'
 $Iso      = Join-Path $HvDir 'axiom-x-dbg.iso'
 $Vhd      = Join-Path $HvDir 'ledger-hyperv.vhd'
+$FsVhd    = Join-Path $HvDir 'fs-hyperv.vhd'
+$FsImg    = Join-Path $Root 'evidence\fs.img'
+$FsSize   = 16MB
 $VmDir    = Join-Path $HvDir 'vm'
 $Ledger   = Join-Path $Root 'evidence\ledger.img'
 $Log      = Join-Path $Root ("evidence\hyperv-serial-{0}.log" -f (Get-Date -Format 'yyyy-MM-dd-HHmm'))
@@ -94,6 +112,10 @@ if ((Get-Service vmms).Status -ne 'Running') { throw "The Hyper-V service (vmms)
 compact /u /s:"$HvDir" /i /q | Out-Null
 compact /u "$HvDir" | Out-Null
 Copy-Item -LiteralPath $BuiltIso -Destination $Iso -Force
+if ($BuiltIso -eq $DbgIso) {
+    Write-Warning "Using ${DbgIso}: its kernel command line is whatever the last qemu-boot.sh run used. Build evidence\axiom-x-hyperv.iso to pin it (see .NOTES)."
+}
+Write-Host "ISO: $BuiltIso"
 
 # A fixed VHD is the raw disk followed by a 512-byte footer that describes
 # it (size, geometry); reuse the existing VHD's footer for the same size.
@@ -117,7 +139,27 @@ if ($UseLedger) {
     [System.IO.File]::WriteAllBytes($Vhd, $image)
     Write-Host "VHD rebuilt from $Ledger ($($raw.Length) bytes + footer)."
 }
-foreach ($f in @($Iso, $Vhd)) {
+
+# File-system disk (primary slave). With -UseLedger it carries evidence\fs.img,
+# the FS paired with the canonical ledger (its root hash is anchored there).
+if ($UseLedger -and (Test-Path -LiteralPath $FsImg)) { $FsSize = (Get-Item -LiteralPath $FsImg).Length }
+if ((Test-Path -LiteralPath $FsVhd) -and ((Get-Item -LiteralPath $FsVhd).Length -ne $FsSize + 512)) {
+    Remove-Item -LiteralPath $FsVhd -Force
+}
+if (-not (Test-Path -LiteralPath $FsVhd)) {
+    New-VHD -Path $FsVhd -SizeBytes $FsSize -Fixed | Out-Null
+    Write-Host "Created blank file-system disk $FsVhd ($FsSize bytes)."
+}
+if ($UseLedger) {
+    $fsRaw = if (Test-Path -LiteralPath $FsImg) { [System.IO.File]::ReadAllBytes($FsImg) } else { New-Object byte[] $FsSize }
+    $fsFooter = Get-VhdFooter $FsVhd $fsRaw.Length
+    $fsImage = New-Object byte[] ($fsRaw.Length + 512)
+    [Array]::Copy($fsRaw, 0, $fsImage, 0, $fsRaw.Length)
+    [Array]::Copy($fsFooter, 0, $fsImage, $fsRaw.Length, 512)
+    [System.IO.File]::WriteAllBytes($FsVhd, $fsImage)
+    Write-Host "FS VHD rebuilt from $(if (Test-Path -LiteralPath $FsImg) { $FsImg } else { 'a blank image' }) ($($fsRaw.Length) bytes + footer)."
+}
+foreach ($f in @($Iso, $Vhd, $FsVhd)) {
     $attr = (Get-Item -LiteralPath $f).Attributes
     $bad = @('Compressed', 'Encrypted', 'SparseFile') | Where-Object { $attr -band [IO.FileAttributes]::$_ }
     if ($bad) { throw "Hyper-V cannot use $f (it is $($bad -join ', ')). Make it a plain file first." }
@@ -139,6 +181,7 @@ Set-VM -Name $VmName -StaticMemory -CheckpointType Disabled -AutomaticStartActio
 Set-VMProcessor -VMName $VmName -Count 1
 Get-VMNetworkAdapter -VMName $VmName | Remove-VMNetworkAdapter          # no network at all
 Add-VMHardDiskDrive -VMName $VmName -ControllerType IDE -ControllerNumber 0 -ControllerLocation 0 -Path $Vhd
+Add-VMHardDiskDrive -VMName $VmName -ControllerType IDE -ControllerNumber 0 -ControllerLocation 1 -Path $FsVhd
 if (Get-VMDvdDrive -VMName $VmName) {
     Set-VMDvdDrive -VMName $VmName -ControllerNumber 1 -ControllerLocation 0 -Path $Iso
 } else {
@@ -216,9 +259,21 @@ finally {
         [System.IO.File]::WriteAllBytes($Ledger, $rawBytes)
         Write-Host "Ledger copied back to $Ledger (previous copy: ledger.img.before-hyperv)."
     }
+    if ($UseLedger -and (Test-Path -LiteralPath $FsVhd)) {
+        $fsBytes = [System.IO.File]::ReadAllBytes($FsVhd)
+        $fsBack = New-Object byte[] ($fsBytes.Length - 512)
+        [Array]::Copy($fsBytes, 0, $fsBack, 0, $fsBack.Length)
+        if (Test-Path -LiteralPath $FsImg) { Copy-Item -LiteralPath $FsImg -Destination "$FsImg.before-hyperv" -Force }
+        [System.IO.File]::WriteAllBytes($FsImg, $fsBack)
+        Write-Host "File system copied back to $FsImg."
+    }
 }
 
 Write-Host ""
 Write-Host "Serial log : $Log"
 Write-Host "Ledger VHD : $Vhd"
+Write-Host "FS VHD     : $FsVhd"
 Write-Host "Verify with: target\release\ledger-tool.exe verify `"$Vhd`" <public-key>"
+if ($UseLedger) {
+    Write-Host "        and: target\release\ledger-tool.exe fs-verify evidence\fs.img evidence\ledger.img <public-key>"
+}

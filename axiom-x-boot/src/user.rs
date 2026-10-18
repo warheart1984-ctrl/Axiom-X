@@ -591,11 +591,13 @@ pub fn run_shell() {
             return;
         };
         kernel_grant(pid, SHELL_RIGHTS);
-        let mut last_flush = axiom_x_arch::sched::TICKS.load(Ordering::Relaxed);
+        // Timed by the TSC, not by counting ticks: a host that drops timer
+        // interrupts must not stretch the persistence interval.
+        let mut last_flush = axiom_x_arch::clock::monotonic_ns();
         while !all_user_processes_ended() {
             unsafe { core::arch::asm!("hlt") };
-            let now = axiom_x_arch::sched::TICKS.load(Ordering::Relaxed);
-            if now - last_flush >= 500 || governance::unflushed() >= FLUSH_BACKLOG {
+            let now = axiom_x_arch::clock::monotonic_ns();
+            if now - last_flush >= 5_000_000_000 || governance::unflushed() >= FLUSH_BACKLOG {
                 flush_ledger_quietly();
                 last_flush = now;
             }

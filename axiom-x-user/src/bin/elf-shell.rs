@@ -129,9 +129,9 @@ fn cmd_clocks() {
     println!("since the time origin:");
     println!("  TSC  {:>8}.{:03} s   (calibrated against the RTC at boot)", ms(mono) / 1000, ms(mono) % 1000);
     println!("  RTC  {:>8}     s   (read now, 1 s resolution)", rtc_elapsed);
-    println!("  PIT  {:>8}.{:03} s   (timer interrupts x 10 ms; starts ~1 s after the origin)", ms(pit) / 1000, ms(pit) % 1000);
+    println!("  TICK {:>8}.{:03} s   (scheduler ticks x 10 ms: APIC timer or PIT; start ~1 s after the origin)", ms(pit) / 1000, ms(pit) % 1000);
     if mono > 0 {
-        println!("  PIT / TSC = {}.{:03}", pit / mono, pit * 1000 / mono % 1000);
+        println!("  TICK / TSC = {}.{:03}", pit / mono, pit * 1000 / mono % 1000);
     }
 }
 

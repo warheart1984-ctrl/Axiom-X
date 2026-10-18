@@ -927,6 +927,10 @@ fn ax_kernel_entry_continue(boot_info: BootInfo) -> ! {
         tsc_hz / 1_000 % 1_000
     );
 
+    // Scheduler tick: the local APIC timer, calibrated against the TSC just
+    // above; the PIT stays as the fallback (and with axiom.timer=pit).
+    start_tick_source();
+
     // Initialize movie subsystem (embedded boot movie)
     serial_puts("Initializing movie subsystem...\n");
     crate::movie::init_movie_subsystem();
@@ -955,10 +959,67 @@ fn ax_kernel_entry_continue(boot_info: BootInfo) -> ! {
     axiom_x_arch::sched::start(init_pid);
 }
 
+/// Make the local APIC timer the scheduler tick if there is one. Interrupts
+/// are still off; IRQ0 (PIT) is masked once the APIC timer runs.
+fn start_tick_source() {
+    if cmdline_flag("axiom.timer=pit") {
+        serial_puts("  Tick: PIT (axiom.timer=pit)\n");
+        return;
+    }
+    let Some(base) = axiom_x_arch::apic::base_phys() else {
+        serial_puts("  Tick: PIT (no local APIC)\n");
+        return;
+    };
+    unsafe {
+        let pml4 = KERNEL_PML4.expect("PML4 not initialized").start_address().as_u64() as *mut PageTable;
+        map_4kib_page(
+            pml4,
+            base,
+            base,
+            PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE,
+        );
+        x86_64::instructions::tlb::flush(VirtAddr::new(base));
+    }
+    match axiom_x_arch::apic::start_timer(base, 100) {
+        Ok(r) => {
+            axiom_x_arch::outb(0x21, axiom_x_arch::inb(0x21) | 0x01); // mask IRQ0
+            serial_print!(
+                "  Tick: local APIC timer at 100 Hz (APIC base {:#x}, {} counts/s, {} per tick); PIT IRQ0 masked\n",
+                base, r.counts_per_s, r.per_tick
+            );
+        }
+        Err(why) => serial_print!("  Tick: PIT (local APIC timer unusable: {})\n", why),
+    }
+}
+
+/// Measure the tick rate against the TSC for `ms` milliseconds and log it:
+/// evidence that ticks arrive at the programmed 100 Hz on this machine.
+fn check_tick_rate(ms: u64) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let t0 = axiom_x_arch::clock::monotonic_ns();
+    let k0 = axiom_x_arch::sched::TICKS.load(Relaxed);
+    while axiom_x_arch::clock::monotonic_ns() - t0 < ms * 1_000_000 {
+        unsafe { asm!("hlt") };
+    }
+    let dt = axiom_x_arch::clock::monotonic_ns() - t0;
+    let n = axiom_x_arch::sched::TICKS.load(Relaxed) - k0;
+    let milli_hz = n * 1_000_000_000_000 / dt.max(1);
+    serial_print!(
+        "[clock] tick check ({}): {} ticks in {}.{:03} s (TSC) = {}.{:01} Hz, expected 100 Hz\n",
+        axiom_x_arch::apic::source_name(),
+        n,
+        dt / 1_000_000_000,
+        dt / 1_000_000 % 1000,
+        milli_hz / 1000,
+        milli_hz % 1000 / 100
+    );
+}
+
 /// Init process (PID 1)
 extern "C" fn init_process() -> ! {
     log::info!("Init process started");
     serial_puts("PID 1 (init) running on its own stack; interrupts enabled\n");
+    check_tick_rate(1000);
 
     // Start the ring-3 programs as concurrent processes, each in its own
     // address space. init stays runnable and is preempted like they are.

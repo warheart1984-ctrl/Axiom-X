@@ -68,7 +68,15 @@ EOF
 echo "=== grub.cfg ==="
 cat evidence/iso/boot/grub/grub.cfg
 grub-file --is-x86-multiboot2 evidence/iso/boot/kernel.elf
-grub-mkrescue -o evidence/axiom-x-dbg.iso evidence/iso >/dev/null 2>&1
+ISO="${ISO_OUT:-evidence/axiom-x-dbg.iso}"
+grub-mkrescue -o "$ISO" evidence/iso >/dev/null 2>&1
+
+# ISO_ONLY=1: just build the ISO (e.g. ISO_OUT=evidence/axiom-x-hyperv.iso
+# for hyperv-run.ps1, with its own KERNEL_CMDLINE baked into grub.cfg).
+if [ "${ISO_ONLY:-0}" = 1 ]; then
+    echo "built $ISO (kernel command line: '${KERNEL_CMDLINE:-}')"
+    exit 0
+fi
 
 # Persistent evidence ledger: a raw disk on the primary IDE master (the
 # kernel's ATA driver). Reused across boots so the chain continues; delete
@@ -89,7 +97,7 @@ FS_DISK="${FS_DISK:-evidence/fs.img}"
 # PS/2 keyboard and screenshot the VGA screen. Runs for $SECS seconds.
 if [ -n "${SHELL_INPUT:-}" ]; then
     rm -f /tmp/axiomx-mon.sock
-    timeout "$SECS" qemu-system-x86_64 -cdrom evidence/axiom-x-dbg.iso -boot d \
+    timeout "$SECS" qemu-system-x86_64 -cdrom "$ISO" -boot d \
         -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
         -drive "file=$FS_DISK,format=raw,if=ide,index=1,media=disk,cache=writethrough" \
         -serial stdio -display none -no-reboot -m 256M \
@@ -104,7 +112,7 @@ fi
 # or, with --foreground, was not reliably ended once it owned the tty.
 if [ "${LIVE:-0}" = 1 ]; then
     echo "=== booting Axiom-X (live serial console; press Ctrl-C to stop the VM) ==="
-    qemu-system-x86_64 -cdrom evidence/axiom-x-dbg.iso -boot d \
+    qemu-system-x86_64 -cdrom "$ISO" -boot d \
         -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
         -drive "file=$FS_DISK,format=raw,if=ide,index=1,media=disk,cache=writethrough" \
         -serial stdio -display none -no-reboot -m 256M || true
@@ -113,7 +121,7 @@ if [ "${LIVE:-0}" = 1 ]; then
     exit 0
 fi
 
-timeout "$SECS" qemu-system-x86_64 -cdrom evidence/axiom-x-dbg.iso -boot d \
+timeout "$SECS" qemu-system-x86_64 -cdrom "$ISO" -boot d \
     -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
     -drive "file=$FS_DISK,format=raw,if=ide,index=1,media=disk,cache=writethrough" \
     -serial file:evidence/serial-mb2.log -display none -no-reboot \
