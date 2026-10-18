@@ -12,7 +12,7 @@
 use axiom_x_user::ledger::{civil::DateTime, verify_window};
 use axiom_x_user::{
     clock_ns, entry, errno, evidence, evidence_count, getpid, print, println, proc_list, read, spawn, wait, write,
-    ExitStatus, ProcInfo, Rights, CLOCK_MONOTONIC, CLOCK_REALTIME,
+    ExitStatus, ProcInfo, Rights, CLOCK_MONOTONIC, CLOCK_MONOTONIC_COARSE, CLOCK_REALTIME, CLOCK_REALTIME_COARSE,
 };
 
 const PROMPT: &str = "axiom> ";
@@ -24,6 +24,7 @@ fn help() {
     println!("  echo <text>           print text");
     println!("  date                  wall clock (RTC-anchored, no time zone)");
     println!("  uptime                time since boot (TSC)");
+    println!("  clocks                compare the PIT, TSC and RTC since boot");
     println!("  ps                    processes: pid, parent, state, rights, name");
     println!("  rights                this shell's rights");
     println!("  run <program> [+evidence] [-send]");
@@ -101,6 +102,30 @@ fn cmd_uptime() {
     }
 }
 
+/// Three independent views of "time since boot". If the PIT loses
+/// interrupts (e.g. under a hypervisor), its figure falls behind.
+fn cmd_clocks() {
+    let (Ok(mono), Ok(real), Ok(rtc), Ok(pit)) = (
+        clock_ns(CLOCK_MONOTONIC),
+        clock_ns(CLOCK_REALTIME),
+        clock_ns(CLOCK_REALTIME_COARSE),
+        clock_ns(CLOCK_MONOTONIC_COARSE),
+    ) else {
+        println!("clocks: clock_gettime failed");
+        return;
+    };
+    let boot_s = (real - mono) / 1_000_000_000; // RTC second at the time origin
+    let rtc_elapsed = rtc / 1_000_000_000 - boot_s;
+    let ms = |ns: u64| ns / 1_000_000;
+    println!("since the time origin:");
+    println!("  TSC  {:>8}.{:03} s   (calibrated against the RTC at boot)", ms(mono) / 1000, ms(mono) % 1000);
+    println!("  RTC  {:>8}     s   (read now, 1 s resolution)", rtc_elapsed);
+    println!("  PIT  {:>8}.{:03} s   (timer interrupts x 10 ms; starts ~1 s after the origin)", ms(pit) / 1000, ms(pit) % 1000);
+    if mono > 0 {
+        println!("  PIT / TSC = {}.{:03}", pit / mono, pit * 1000 / mono % 1000);
+    }
+}
+
 fn cmd_run(args: &str) {
     let mut parts = args.split_whitespace();
     let Some(name) = parts.next() else {
@@ -163,6 +188,7 @@ fn execute(line: &str) -> bool {
         "echo" => println!("{}", rest),
         "date" => cmd_date(),
         "uptime" => cmd_uptime(),
+        "clocks" => cmd_clocks(),
         "ps" => cmd_ps(),
         "rights" => cmd_rights(),
         "run" => cmd_run(rest),

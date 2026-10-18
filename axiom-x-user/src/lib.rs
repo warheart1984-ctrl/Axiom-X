@@ -80,6 +80,10 @@ pub fn read(fd: u64, buf: &mut [u8]) -> i64 {
 /// Clock ids for `clock_gettime`.
 pub const CLOCK_REALTIME: u64 = 0;
 pub const CLOCK_MONOTONIC: u64 = 1;
+/// The RTC read directly (1 s resolution).
+pub const CLOCK_REALTIME_COARSE: u64 = 5;
+/// PIT ticks x 10 ms since the scheduler started.
+pub const CLOCK_MONOTONIC_COARSE: u64 = 6;
 
 /// Nanoseconds from `clock`, or `-errno`.
 pub fn clock_ns(clock: u64) -> Result<u64, i64> {

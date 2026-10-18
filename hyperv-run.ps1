@@ -38,6 +38,18 @@
 .PARAMETER Recreate
     If a VM named Axiom-X already exists, turn it off and remove it first.
 
+.PARAMETER Interactive
+    Open the VM's console window (vmconnect) so you can use the shell with
+    the keyboard, and keep capturing COM1 until you turn the VM off (in the
+    console window: Action > Turn Off, or close it and use Hyper-V Manager).
+    -Seconds is ignored.
+
+.PARAMETER UseLedger
+    Continue the canonical ledger instead of a separate copy: build the VHD
+    from evidence\ledger.img before the run (raw disk + the existing VHD's
+    512-byte footer), and copy the result back to evidence\ledger.img
+    afterwards (the previous ledger.img is kept as ledger.img.before-hyperv).
+
 .EXAMPLE
     # From an elevated PowerShell in the axiom-x folder:
     powershell -ExecutionPolicy Bypass -File .\hyperv-run.ps1 -Cleanup
@@ -46,7 +58,9 @@
 param(
     [int]$Seconds = 90,
     [switch]$Cleanup,
-    [switch]$Recreate
+    [switch]$Recreate,
+    [switch]$Interactive,
+    [switch]$UseLedger
 )
 
 $ErrorActionPreference = 'Stop'
@@ -58,7 +72,8 @@ $HvDir    = Join-Path $Root 'evidence\hyperv'
 $Iso      = Join-Path $HvDir 'axiom-x-dbg.iso'
 $Vhd      = Join-Path $HvDir 'ledger-hyperv.vhd'
 $VmDir    = Join-Path $HvDir 'vm'
-$Log      = Join-Path $Root ("evidence\hyperv-serial-{0}.log" -f (Get-Date -Format 'yyyy-MM-dd'))
+$Ledger   = Join-Path $Root 'evidence\ledger.img'
+$Log      = Join-Path $Root ("evidence\hyperv-serial-{0}.log" -f (Get-Date -Format 'yyyy-MM-dd-HHmm'))
 
 # --- 1. Preconditions --------------------------------------------------------
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -79,6 +94,29 @@ if ((Get-Service vmms).Status -ne 'Running') { throw "The Hyper-V service (vmms)
 compact /u /s:"$HvDir" /i /q | Out-Null
 compact /u "$HvDir" | Out-Null
 Copy-Item -LiteralPath $BuiltIso -Destination $Iso -Force
+
+# A fixed VHD is the raw disk followed by a 512-byte footer that describes
+# it (size, geometry); reuse the existing VHD's footer for the same size.
+function Get-VhdFooter([string]$path, [long]$rawSize) {
+    $bytes = [System.IO.File]::ReadAllBytes($path)
+    $footer = New-Object byte[] 512
+    [Array]::Copy($bytes, $bytes.Length - 512, $footer, 0, 512)
+    if ([System.Text.Encoding]::ASCII.GetString($footer, 0, 8) -ne 'conectix') { throw "$path has no VHD footer." }
+    $size = [long]0
+    for ($i = 48; $i -lt 56; $i++) { $size = ($size -shl 8) -bor $footer[$i] }  # current size, big-endian
+    if ($size -ne $rawSize) { throw "VHD footer describes $size bytes, the ledger has $rawSize." }
+    , $footer
+}
+if ($UseLedger) {
+    if (-not (Test-Path -LiteralPath $Ledger)) { throw "Missing input: $Ledger" }
+    $raw = [System.IO.File]::ReadAllBytes($Ledger)
+    $footer = Get-VhdFooter $Vhd $raw.Length
+    $image = New-Object byte[] ($raw.Length + 512)
+    [Array]::Copy($raw, 0, $image, 0, $raw.Length)
+    [Array]::Copy($footer, 0, $image, $raw.Length, 512)
+    [System.IO.File]::WriteAllBytes($Vhd, $image)
+    Write-Host "VHD rebuilt from $Ledger ($($raw.Length) bytes + footer)."
+}
 foreach ($f in @($Iso, $Vhd)) {
     $attr = (Get-Item -LiteralPath $f).Attributes
     $bad = @('Compressed', 'Encrypted', 'SparseFile') | Where-Object { $attr -band [IO.FileAttributes]::$_ }
@@ -117,7 +155,11 @@ Get-VMComPort -VMName $VmName | Format-Table Name, Path -AutoSize
 $pipe = $null
 $out = $null
 try {
-    Write-Host "Starting VM; capturing COM1 for $Seconds s -> $Log"
+    if ($Interactive) {
+        Write-Host "Starting VM; capturing COM1 until the VM is turned off -> $Log"
+    } else {
+        Write-Host "Starting VM; capturing COM1 for $Seconds s -> $Log"
+    }
     Start-VM -Name $VmName
     # Hyper-V creates the pipe server when the VM starts; connect at once so
     # little or nothing of the boot output is missed.
@@ -127,7 +169,17 @@ try {
     $buf = New-Object byte[] 4096
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     $pending = $null
-    while ($clock.Elapsed.TotalSeconds -lt $Seconds) {
+    if ($Interactive) {
+        # The console window shows the VGA screen and sends keystrokes to
+        # the emulated PS/2 keyboard.
+        Start-Process vmconnect.exe -ArgumentList 'localhost', $VmName
+    }
+    $nextCheck = 0
+    while ($Interactive -or $clock.Elapsed.TotalSeconds -lt $Seconds) {
+        if ($Interactive -and $clock.Elapsed.TotalSeconds -ge $nextCheck) {
+            $nextCheck = $clock.Elapsed.TotalSeconds + 1
+            if ((Get-VM -Name $VmName).State -ne 'Running') { Write-Host "[VM turned off]"; break }
+        }
         if ($null -eq $pending) { $pending = $pipe.ReadAsync($buf, 0, $buf.Length) }
         if ($pending.Wait(250)) {
             $n = $pending.Result
@@ -154,6 +206,15 @@ finally {
         Write-Host "Removing the VM definition (VHD and log are kept)..."
         Remove-VM -Name $VmName -Force
         Remove-Item -Recurse -Force $VmDir -ErrorAction SilentlyContinue
+    }
+    if ($UseLedger -and (Test-Path -LiteralPath $Vhd)) {
+        # Carry the chain this boot extended back into the canonical ledger.
+        $vhdBytes = [System.IO.File]::ReadAllBytes($Vhd)
+        $rawBytes = New-Object byte[] ($vhdBytes.Length - 512)
+        [Array]::Copy($vhdBytes, 0, $rawBytes, 0, $rawBytes.Length)
+        Copy-Item -LiteralPath $Ledger -Destination "$Ledger.before-hyperv" -Force
+        [System.IO.File]::WriteAllBytes($Ledger, $rawBytes)
+        Write-Host "Ledger copied back to $Ledger (previous copy: ledger.img.before-hyperv)."
     }
 }
 

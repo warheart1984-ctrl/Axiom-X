@@ -234,13 +234,18 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
     frame_rsp
 }
 
-/// `clock_gettime(clockid, *timespec)`: 0 = CLOCK_REALTIME (RTC-anchored
-/// wall clock), 1 = CLOCK_MONOTONIC (TSC since boot). Both come from the
-/// TSC, not the PIT.
+/// `clock_gettime(clockid, *timespec)`:
+/// - 0 CLOCK_REALTIME: RTC-anchored wall clock, advanced by the TSC
+/// - 1 CLOCK_MONOTONIC: TSC since the time origin
+/// - 5 CLOCK_REALTIME_COARSE: the RTC itself, read now (1 s resolution)
+/// - 6 CLOCK_MONOTONIC_COARSE: PIT ticks x 10 ms (shows whether the PIT
+///   keeps up with the TSC and RTC; see `clock::timer_check`)
 fn sys_clock_gettime(clock: u64, ts: u64) -> i64 {
     let ns = match clock {
         0 => crate::clock::realtime_ns(),
         1 => crate::clock::monotonic_ns(),
+        5 => crate::clock::read_rtc().unix_seconds() * 1_000_000_000,
+        6 => crate::sched::TICKS.load(core::sync::atomic::Ordering::Relaxed) * crate::sched::TICK_NS,
         _ => return -EINVAL,
     };
     if !user_range_accessible(ts, 16, true) {

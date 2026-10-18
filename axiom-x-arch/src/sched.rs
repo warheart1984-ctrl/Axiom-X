@@ -99,11 +99,13 @@ pub fn schedule(frame_rsp: u64) -> u64 {
     };
     // Wake sleepers whose deadline has passed, and console readers when
     // input is waiting (interrupt handlers only queue bytes).
-    let now = TICKS.load(Ordering::Relaxed);
+    // Deadlines are TSC time, not PIT ticks: ticks are lost whenever
+    // interrupts stay off longer than a period, the TSC never is.
+    let now = crate::clock::monotonic_ns();
     let input = crate::console::has_input();
     for p in procs.iter_mut() {
-        if p.state == ProcessState::Blocked && p.wake_tick != 0 && p.wake_tick <= now {
-            p.wake_tick = 0;
+        if p.state == ProcessState::Blocked && p.wake_at_ns != 0 && p.wake_at_ns <= now {
+            p.wake_at_ns = 0;
             p.state = ProcessState::Runnable;
         }
         if p.state == ProcessState::Blocked && p.waiting_for == WAIT_CONSOLE && input {
@@ -249,13 +251,14 @@ pub const WAIT_CONSOLE: i64 = -2;
 /// PIT period: the scheduler's time unit.
 pub const TICK_NS: u64 = 10_000_000;
 
-/// Block the current thread until `ticks` timer ticks from now. The caller
-/// (a syscall) must then switch away with `schedule`.
+/// Block the current thread for `ticks` scheduler periods (10 ms each),
+/// measured on the TSC; it is woken by the first scheduler pass after the
+/// deadline. The caller (a syscall) must then switch away with `schedule`.
 pub fn block_current_for(ticks: u64) {
-    let wake = TICKS.load(Ordering::Relaxed) + ticks.max(1);
+    let wake = crate::clock::monotonic_ns() + ticks.max(1) * TICK_NS;
     if let Some(mut g) = process_table().get_mut(current_pid()) {
         let p = g.get_mut();
-        p.wake_tick = wake;
+        p.wake_at_ns = wake;
         p.state = ProcessState::Blocked;
     }
 }

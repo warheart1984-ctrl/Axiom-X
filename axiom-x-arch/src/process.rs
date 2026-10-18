@@ -148,8 +148,9 @@ pub struct Process {
     /// Kernel RSP pointing at this thread's saved `TrapFrame` while it is
     /// not running (see `sched`).
     pub saved_rsp: u64,
-    /// While `Blocked` in `nanosleep`: the PIT tick at which to wake (0 = none).
-    pub wake_tick: u64,
+    /// While `Blocked` in `nanosleep`: monotonic (TSC) time in ns at which to
+    /// wake (0 = none).
+    pub wake_at_ns: u64,
     /// While `Blocked` in `wait4`: the child awaited (-1 = any, 0 = none).
     pub waiting_for: i64,
     /// Capability rights held (`axiom_x_capability::Rights` bits). Kernel
@@ -566,7 +567,7 @@ pub fn init_kernel_process(
         time_slice_ns: 10_000_000,
         affinity: Some(0),
         saved_rsp: 0,
-        wake_tick: 0,
+        wake_at_ns: 0,
         waiting_for: 0,
         rights: u64::MAX,
         name: *b"kernel-init\0\0\0\0\0",
@@ -604,7 +605,7 @@ pub fn init_user_process(
         time_slice_ns: 5_000_000,
         affinity: Some(0),
         saved_rsp: 0,
-        wake_tick: 0,
+        wake_at_ns: 0,
         waiting_for: 0,
         rights: 0,
         name: [0; 16],

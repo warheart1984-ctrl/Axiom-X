@@ -561,15 +561,22 @@ const COM1: u16 = 0x3F8;
 pub fn init_serial() {
     outb(COM1 + 1, 0x00); // Disable interrupts
     outb(COM1 + 3, 0x80); // Enable DLAB
-    outb(COM1 + 0, 0x0C); // Divisor low byte (115200 baud @ 18.432 MHz)
+    // Divisor 1 = 115200 baud (1.8432 MHz UART clock / 16). It was 0x0C
+    // (9600 baud): emulators model transmit time, so each character took
+    // ~1 ms, and console lines (written with interrupts off) cost the PIT
+    // many lost ticks.
+    outb(COM1 + 0, 0x01); // Divisor low byte
     outb(COM1 + 1, 0x00); // Divisor high byte
     outb(COM1 + 3, 0x03); // 8N1, disable DLAB
-    // Keep any byte already received (typed or piped in before boot): the
-    // FIFO reset below would discard it.
+    // Keep any byte already received (typed or piped in before boot).
     while inb(COM1 + 5) & 0x01 != 0 {
         axiom_x_arch::console::push_input(inb(COM1));
     }
-    outb(COM1 + 2, 0xC7); // Enable FIFO, clear, 14-byte threshold
+    // The FIFO control register is deliberately left alone: changing the
+    // FIFO-enable bit flushes the receive FIFO (16550 behaviour, and QEMU's),
+    // which raced with input arriving during boot and dropped bytes. Without
+    // the FIFO, receive is one byte at a time, drained by the IRQ4 handler;
+    // transmit already waits for the holding register per byte.
     outb(COM1 + 4, 0x0B); // IRQs enabled, RTS/DSR set
 }
 
