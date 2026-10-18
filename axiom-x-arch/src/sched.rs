@@ -82,6 +82,7 @@ extern "C" fn timer_dispatch(frame_rsp: u64) -> u64 {
     // EOI first: the switch below may not come back to this thread soon.
     crate::outb(0x20, 0x20);
     TICKS.fetch_add(1, Ordering::Relaxed);
+    crate::console::poll_keyboard();
     // The interrupted thread was running, so it can always be resumed.
     match schedule(frame_rsp) {
         0 => frame_rsp,

@@ -118,12 +118,103 @@ pub fn decode_scancode(sc: u8) -> Option<u8> {
     None
 }
 
-/// IRQ1 body: read the scancode and queue the character it produces.
-pub fn on_keyboard_irq() {
-    let sc = inb(0x60);
-    if let Some(c) = decode_scancode(sc) {
+const PS2_DATA: u16 = 0x60;
+const PS2_STATUS: u16 = 0x64;
+/// Status: output buffer full (a byte waits in 0x60).
+const PS2_OBF: u8 = 0x01;
+/// Status: input buffer full (controller still busy with our last write).
+const PS2_IBF: u8 = 0x02;
+/// Status: the waiting byte is from the mouse port, not the keyboard.
+const PS2_AUX: u8 = 0x20;
+
+/// What `init_ps2` found and set (for the boot log).
+#[derive(Clone, Copy, Debug)]
+pub struct Ps2Report {
+    pub present: bool,
+    pub config_before: u8,
+    pub config_after: u8,
+    /// Keyboard's reply to "enable scanning" (0xFA = ACK), if any.
+    pub enable_reply: Option<u8>,
+    pub flushed: u32,
+}
+
+fn ps2_wait_write() -> bool {
+    (0..100_000).any(|_| inb(PS2_STATUS) & PS2_IBF == 0)
+}
+
+fn ps2_wait_read() -> Option<u8> {
+    (0..100_000).find(|_| inb(PS2_STATUS) & PS2_OBF != 0).map(|_| inb(PS2_DATA))
+}
+
+fn ps2_command(cmd: u8) {
+    if ps2_wait_write() {
+        outb(PS2_STATUS, cmd);
+    }
+}
+
+fn ps2_flush() -> u32 {
+    let mut n = 0;
+    while n < 64 && inb(PS2_STATUS) & PS2_OBF != 0 {
+        inb(PS2_DATA);
+        n += 1;
+    }
+    n
+}
+
+/// Put the 8042 controller in a known state instead of trusting the BIOS:
+/// keyboard port on with its interrupt (IRQ1), scancode translation to set
+/// 1, mouse port off, scanning enabled, and the output buffer empty, since
+/// a byte left waiting there blocks every later IRQ1 (it is edge-triggered).
+/// Call with interrupts off, before IRQ1 is unmasked.
+pub fn init_ps2() -> Ps2Report {
+    let mut r = Ps2Report { present: false, config_before: 0, config_after: 0, enable_reply: None, flushed: 0 };
+    if inb(PS2_STATUS) == 0xFF {
+        return r; // no controller
+    }
+    r.present = true;
+    ps2_command(0xAD); // disable keyboard port
+    ps2_command(0xA7); // disable mouse port
+    r.flushed = ps2_flush();
+    ps2_command(0x20); // read configuration byte
+    let cfg = ps2_wait_read().unwrap_or(0);
+    r.config_before = cfg;
+    let cfg = (cfg | 0x01 | 0x40) & !0x02 & !0x10; // IRQ1 on, translate, no IRQ12, clock on
+    ps2_command(0x60); // write configuration byte
+    if ps2_wait_write() {
+        outb(PS2_DATA, cfg);
+    }
+    ps2_command(0x20);
+    r.config_after = ps2_wait_read().unwrap_or(0);
+    ps2_command(0xAE); // enable keyboard port
+    if ps2_wait_write() {
+        outb(PS2_DATA, 0xF4); // keyboard: enable scanning
+        r.enable_reply = ps2_wait_read();
+    }
+    r.flushed += ps2_flush();
+    r
+}
+
+/// Take one keyboard byte if the controller holds one.
+fn take_keyboard_byte() {
+    let s = inb(PS2_STATUS);
+    if s & PS2_OBF == 0 || s & PS2_AUX != 0 {
+        return;
+    }
+    if let Some(c) = decode_scancode(inb(PS2_DATA)) {
         push(c);
     }
+}
+
+/// IRQ1 body: queue the character the waiting scancode produces. Checks the
+/// status first: the timer may already have taken the byte (`poll_keyboard`).
+pub fn on_keyboard_irq() {
+    take_keyboard_byte();
+}
+
+/// Called on every timer tick (interrupts off): picks up a keyboard byte
+/// whose IRQ1 was lost or never raised, so input cannot stall for good.
+pub fn poll_keyboard() {
+    take_keyboard_byte();
 }
 
 // ----------------------------------------------------------------------------

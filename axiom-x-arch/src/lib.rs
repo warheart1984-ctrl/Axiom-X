@@ -40,6 +40,9 @@ const PIT_CHANNEL0: u16 = 0x40;
 const PIT_COMMAND: u16 = 0x43;
 
 /// Initialize x86_64 architecture
+/// What the PS/2 controller reported during `init_arch` (for the boot log).
+pub static PS2_REPORT: spin::Once<console::Ps2Report> = spin::Once::new();
+
 pub fn init_arch() {
     // Enable SSE/FPU
     unsafe {
@@ -85,6 +88,9 @@ pub fn init_arch() {
     // the timer handler needs the scheduler and process table, so the
     // boot path enables them once those exist (via the first iretq).
     console::enable_serial_rx();
+    let ps2 = console::init_ps2();
+    log::info!("PS/2 controller: {:?}", ps2);
+    PS2_REPORT.call_once(|| ps2);
     outb(0x21, 0xEC);
     outb(0xA1, 0xFF);
     log::info!("x86_64 architecture initialized (interrupts still disabled)");

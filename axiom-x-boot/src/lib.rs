@@ -908,6 +908,13 @@ fn ax_kernel_entry_continue(boot_info: BootInfo) -> ! {
     // 5. Initialize architecture (IDT, syscall, etc.)
     serial_puts("Initializing architecture...\n");
     axiom_x_arch::init_arch();
+    if let Some(r) = axiom_x_arch::PS2_REPORT.get() {
+        serial_print!(
+            "  PS/2: present {}, config {:#04x} -> {:#04x}, enable-scanning reply {:?}, {} stale bytes flushed
+",
+            r.present, r.config_before, r.config_after, r.enable_reply, r.flushed
+        );
+    }
 
     // Clock: RTC wall time + TSC calibrated against RTC second edges.
     // Interrupts are still off, so nothing disturbs the calibration.
