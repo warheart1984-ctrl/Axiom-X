@@ -6,7 +6,7 @@ license = { workspace = true }
 repository = { workspace = true }
 
 [dependencies]
-axiom-x-principal = { path = "../axiom-x-principal" }
+axiom-x-principal = { path = "../axiom-x-principal", default-features = false }
 bitflags = { workspace = true }
 heapless = { workspace = true }
 spin = { workspace = true }

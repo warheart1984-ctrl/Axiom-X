@@ -159,6 +159,33 @@ const ELF_STACK_PAGES: u64 = 4;
 /// `wait4`.
 const USER_INIT_MODULE: &str = "elf-init";
 
+use axiom_x_arch::governance::{self, Rights};
+
+/// Rights the kernel grants the embedded regression programs: console only.
+const EMBEDDED_RIGHTS: Rights = Rights::SEND;
+
+/// Rights the kernel grants user-space init. Everything any process can
+/// ever hold descends from this set: init can only pass on subsets.
+const INIT_RIGHTS: Rights = Rights::new(
+    Rights::SEND.bits() | Rights::SPAWN.bits() | Rights::DELEGATE.bits() | Rights::EVIDENCE.bits(),
+);
+
+/// Ledger the grant for a process the kernel itself created (the rights
+/// were set at creation, before it could run).
+fn kernel_grant(pid: u32, rights: Rights) {
+    governance::record_create(0, pid, rights, true, pid as i64);
+}
+
+/// Lowercase hex of the first 8 bytes of a digest (for logs).
+fn short_hex(d: &[u8; 32]) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    for (i, b) in d[..8].iter().enumerate() {
+        out[2 * i] = b"0123456789abcdef"[(b >> 4) as usize];
+        out[2 * i + 1] = b"0123456789abcdef"[(b & 15) as usize];
+    }
+    out
+}
+
 /// Map an embedded blob (one code page + one stack page) into a new
 /// address space and start it.
 fn spawn_embedded(prog: &UserProgram) {
@@ -180,8 +207,11 @@ fn spawn_embedded(prog: &UserProgram) {
     map_page_in(root, USER_STACK_VA, stack, user_rw());
 
     let kstack = alloc_kernel_stack();
-    let pid = axiom_x_arch::sched::spawn_user_process(USER_CODE_VA, USER_STACK_VA + 4096, kstack, root)
-        .expect("create user process");
+    let pid = axiom_x_arch::sched::spawn_user_process(
+        USER_CODE_VA, USER_STACK_VA + 4096, kstack, root, None, EMBEDDED_RIGHTS,
+    )
+    .expect("create user process");
+    kernel_grant(pid, EMBEDDED_RIGHTS);
     serial_print!(
         "[kernel] spawned '{}' as pid {}: {} bytes embedded, PML4 {:#x}\n",
         prog.name, pid, len, root.start_address().as_u64()
@@ -198,7 +228,7 @@ fn user_rw() -> PageTableFlags {
 /// Validate, load and start an ELF image as a child of `parent` (`None` =
 /// the kernel). Returns the PID or a negative errno; a rejected image never
 /// becomes a process and leaves nothing allocated.
-fn spawn_elf(name: &str, bytes: &[u8], parent: Option<u32>) -> Result<u32, i64> {
+fn spawn_elf(name: &str, bytes: &[u8], parent: Option<u32>, rights: Rights) -> Result<u32, i64> {
     use axiom_x_arch::syscall::ENOEXEC;
     const ENOMEM: i64 = 12;
     let image = crate::elf::parse(bytes).map_err(|why| {
@@ -220,11 +250,8 @@ fn spawn_elf(name: &str, bytes: &[u8], parent: Option<u32>) -> Result<u32, i64> 
         map_page_in(root, ELF_STACK_TOP - i * 4096, f, user_rw());
     }
     let kstack = alloc_kernel_stack();
-    let pid = axiom_x_arch::sched::spawn_user_process(image.entry, ELF_STACK_TOP, kstack, root)
+    let pid = axiom_x_arch::sched::spawn_user_process(image.entry, ELF_STACK_TOP, kstack, root, parent, rights)
         .map_err(|_| -ENOMEM)?;
-    if let Some(mut g) = axiom_x_arch::interrupts::process_table().get_mut(pid) {
-        g.get_mut().parent_pid = parent;
-    }
     serial_print!(
         "[kernel] loaded ELF '{}' as pid {} (parent {}): {} bytes, {} segments, {} pages, PML4 {:#x}\n",
         name,
@@ -239,10 +266,10 @@ fn spawn_elf(name: &str, bytes: &[u8], parent: Option<u32>) -> Result<u32, i64> 
 }
 
 /// `AX_SPAWN_MODULE` hook: start the boot module called `name`.
-fn spawn_module_hook(name: &str, parent: u32) -> i64 {
+fn spawn_module_hook(name: &str, parent: u32, rights: Rights) -> i64 {
     match crate::boot_modules().iter().find(|m| m.name() == name) {
         None => -axiom_x_arch::syscall::ENOENT,
-        Some(m) => match spawn_elf(name, m.bytes(), Some(parent)) {
+        Some(m) => match spawn_elf(name, m.bytes(), Some(parent), rights) {
             Ok(pid) => pid as i64,
             Err(e) => e,
         },
@@ -272,7 +299,8 @@ fn spawn_round() -> usize {
     }
     match crate::boot_modules().iter().find(|m| m.name() == USER_INIT_MODULE) {
         Some(m) => {
-            if spawn_elf(USER_INIT_MODULE, m.bytes(), None).is_ok() {
+            if let Ok(pid) = spawn_elf(USER_INIT_MODULE, m.bytes(), None, INIT_RIGHTS) {
+                kernel_grant(pid, INIT_RIGHTS);
                 started += 1;
             }
         }
@@ -301,7 +329,9 @@ fn reap() -> (u32, u64) {
     let (mut n, mut frames) = (0, 0);
     for pid in dead {
         if let Some(p) = table.remove(pid) {
-            frames += release_process(&p);
+            let f = release_process(&p);
+            governance::record_reap(0, pid, f);
+            frames += f;
             n += 1;
         }
     }
@@ -323,6 +353,13 @@ pub fn run_rounds() {
         let (n, freed) = reap();
         let left = axiom_x_arch::interrupts::process_table().count();
         after[round] = frames_in_use();
+        let (records, head) = governance::ledger_summary();
+        let hex = short_hex(&head);
+        serial_print!(
+            "[kernel] ledger: {} records, head {}...\n",
+            records,
+            core::str::from_utf8(&hex).unwrap_or("?")
+        );
         serial_print!(
             "[kernel] round {}: kernel started {}, kernel reaped {} ({} frames); {} process records left; frames in use {} -> {}\n",
             round + 1, started, n, freed, left, before, after[round]

@@ -4,12 +4,8 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-extern crate alloc;
 
 use core::fmt;
-use alloc::string::String;
-use alloc::vec::Vec;
-use alloc::collections::BTreeMap;
 use heapless::Vec as HeaplessVec;
 use spin::Mutex;
 
@@ -153,6 +149,26 @@ pub const fn remove(&mut self, other: Self) {
 impl Default for Rights {
     fn default() -> Self {
         Self::empty()
+    }
+}
+
+impl core::ops::BitOr for Rights {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self {
+        self.union(rhs)
+    }
+}
+
+impl core::ops::BitOrAssign for Rights {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.insert(rhs);
+    }
+}
+
+impl core::ops::BitAnd for Rights {
+    type Output = Self;
+    fn bitand(self, rhs: Self) -> Self {
+        self.intersection(rhs)
     }
 }
 
@@ -589,9 +605,10 @@ impl CapabilityBuilder {
             cap.root_id = parent.root_id;
         }
 
-        *next_id = next_id.wrapping_add(1);
         cap
+    }
 }
+
 impl Default for CapabilityBuilder {
     fn default() -> Self {
         Self::new()
@@ -642,7 +659,7 @@ mod tests {
             .authority(axiom_x_principal::AuthorityClass::Wolf)
             .build(&mut next_id);
 
-        let mut next_id2 = next_id.next();
+        let mut next_id2 = next_id;
         let child = CapabilityBuilder::new()
             .object(CapabilityObject::endpoint(1))
             .rights(Rights::SEND)
@@ -650,8 +667,10 @@ mod tests {
             .parent(&parent)
             .build(&mut next_id2);
 
-        assert!(child.can_delegate());
+        // Attenuated to SEND only: the child must not be able to delegate.
+        assert!(!child.can_delegate());
         assert_eq!(child.lineage.generation, 1);
         assert_eq!(child.lineage.parent, Some(parent.id));
     }
 
+}

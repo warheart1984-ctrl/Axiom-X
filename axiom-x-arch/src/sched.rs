@@ -177,6 +177,19 @@ fn set_saved_rsp(pid: u32, rsp: u64) {
     p.state = ProcessState::Runnable;
 }
 
+/// Make a new user process runnable together with its identity: parent and
+/// rights are written in the same critical section that sets `Runnable`, so
+/// no tick can schedule it before they hold (it would otherwise run with
+/// zero rights, or end before its parent is recorded).
+fn activate_new(pid: u32, rsp: u64, parent: Option<u32>, rights: u64) {
+    let mut guard = process_table().get_mut(pid).expect("new process");
+    let p = guard.get_mut();
+    p.parent_pid = parent;
+    p.rights = rights;
+    p.saved_rsp = rsp;
+    p.state = ProcessState::Runnable;
+}
+
 /// Create a ring-0 thread running `entry` on the kernel stack ending at
 /// `kstack_top`, in address space `root`.
 pub fn spawn_kernel_thread(
@@ -191,16 +204,19 @@ pub fn spawn_kernel_thread(
 }
 
 /// Create a ring-3 process entering at `entry` with user stack `user_rsp`.
-/// `kstack_top` is its private kernel stack (TSS.RSP0 while it runs).
+/// `kstack_top` is its private kernel stack (TSS.RSP0 while it runs);
+/// `parent` (None = kernel) and `rights` hold from its first instruction.
 pub fn spawn_user_process(
     entry: u64,
     user_rsp: u64,
     kstack_top: VirtAddr,
     root: PhysFrame<Size4KiB>,
+    parent: Option<u32>,
+    rights: crate::governance::Rights,
 ) -> Result<u32, &'static str> {
     let pid = init_user_process(process_table(), entry, VirtAddr::new(user_rsp), kstack_top, root)?;
     let rsp = initial_frame(kstack_top, entry, USER_CS, user_rsp, USER_DS);
-    set_saved_rsp(pid, rsp);
+    activate_new(pid, rsp, parent, rights.bits());
     Ok(pid)
 }
 

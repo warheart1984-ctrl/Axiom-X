@@ -11,6 +11,7 @@ members = [
     "axiom-x-principal",
     "axiom-x-capability",
     "axiom-x-capability-lineage",
+    "axiom-x-ledger",
 ]
 exclude = ["axiom-x-init", "axiom-x-kernel", "axiom-x-principal", "axiom-x-capability", "axiom-x-capability-lineage"]
 
@@ -19,7 +20,7 @@ exclude = ["axiom-x-init", "axiom-x-kernel", "axiom-x-principal", "axiom-x-capab
 # ABIs (x86-interrupt, naked asm) that the Windows/MSVC host codegen cannot
 # compile (upstream rustc/LLVM bugs). Build/check those with:
 #   cargo build --workspace --target x86_64-unknown-none
-default-members = ["axiom-x-math", "axiom-x-sys", "axiom-x-arch-traits"]
+default-members = ["axiom-x-math", "axiom-x-sys", "axiom-x-arch-traits", "axiom-x-ledger"]
 
 [workspace.package]
 version = "0.1.0"

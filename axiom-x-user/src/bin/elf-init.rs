@@ -1,19 +1,34 @@
 //! User-space init: starts the other programs with `AX_SPAWN_MODULE`,
-//! checks the spawn failure cases, and reaps every child with `wait4`.
+//! granting each only the rights it needs, checks the spawn failure cases
+//! (including an escalation attempt), reaps every child with `wait4`, then
+//! runs the auditor over the kernel's evidence ledger.
 //!
 //! Expected (the kernel's boot-module set):
-//! - `elf-hello`, `elf-fast`, `elf-slow` exit 0; `elf-crash` is killed by
-//!   signal 11 (ring-3 page fault);
-//! - `elf-bad-wx` fails with -ENOEXEC (the loader rejects W+X), and
-//!   `no-such-program` with -ENOENT;
-//! - after all children are reaped, `wait4(-1)` returns -ECHILD.
+//! - `elf-hello`, `elf-fast`, `elf-slow` (SEND) exit 0; `elf-crash` (SEND)
+//!   is killed by signal 11; `elf-noperm` (no rights) exits 0 after both of
+//!   its calls are refused with -EPERM;
+//! - spawn failures: `elf-bad-wx` -ENOEXEC, `no-such-program` -ENOENT, and
+//!   `elf-hello` with IO_PORT (which init does not hold) -EPERM;
+//! - `elf-audit` (SEND + EVIDENCE) verifies the ledger chain and exits 0;
+//! - finally `wait4(-1)` returns -ECHILD.
 
 #![no_std]
 #![no_main]
 
-use axiom_x_user::{entry, errno, getpid, println, spawn, wait, ExitStatus};
+use axiom_x_user::{entry, errno, getpid, println, spawn, wait, ExitStatus, Rights};
 
-const PROGRAMS: [&str; 6] = ["elf-hello", "elf-fast", "elf-slow", "elf-crash", "elf-bad-wx", "no-such-program"];
+/// (module, rights granted, expected spawn result: 0 = success, else -errno)
+const PROGRAMS: [(&str, Rights, i64); 8] = [
+    ("elf-hello", Rights::SEND, 0),
+    ("elf-fast", Rights::SEND, 0),
+    ("elf-slow", Rights::SEND, 0),
+    ("elf-crash", Rights::SEND, 0),
+    ("elf-noperm", Rights::NONE, 0),
+    ("elf-bad-wx", Rights::SEND, -errno::ENOEXEC),
+    ("no-such-program", Rights::SEND, -errno::ENOENT),
+    // Escalation: init does not hold IO_PORT, so it cannot grant it.
+    ("elf-hello", Rights::new(Rights::SEND.bits() | Rights::IO_PORT.bits()), -errno::EPERM),
+];
 
 fn main() -> i32 {
     println!("[init] user-space init running as pid {}", getpid());
@@ -21,19 +36,14 @@ fn main() -> i32 {
     let mut children = [0u32; PROGRAMS.len()];
     let mut n = 0;
     let mut failures_as_expected = 0;
-    for name in PROGRAMS {
-        let r = spawn(name);
+    for (name, rights, expected) in PROGRAMS {
+        let r = spawn(name, rights);
         if r > 0 {
-            println!("[init] spawn {} -> pid {}", name, r);
+            println!("[init] spawn {} rights {:#x} -> pid {}", name, rights.bits(), r);
             children[n] = r as u32;
             n += 1;
         } else {
-            println!("[init] spawn {} -> {} ({})", name, r, errno::name(r));
-            let expected = match name {
-                "elf-bad-wx" => -errno::ENOEXEC,
-                "no-such-program" => -errno::ENOENT,
-                _ => 0,
-            };
+            println!("[init] spawn {} rights {:#x} -> {} ({})", name, rights.bits(), r, errno::name(r));
             if r == expected {
                 failures_as_expected += 1;
             }
@@ -80,13 +90,22 @@ fn main() -> i32 {
         }
     }
 
+    // With every other child reaped, audit the ledger they produced.
+    let audit_ok = match spawn("elf-audit", Rights::new(Rights::SEND.bits() | Rights::EVIDENCE.bits())) {
+        r if r > 0 => matches!(wait(r), Ok((_, ExitStatus::Exited(0)))),
+        r => {
+            println!("[init] spawn elf-audit -> {} ({})", r, errno::name(r));
+            false
+        }
+    };
+
     let none_left = wait(-1);
     println!(
-        "[init] all children reaped: {}/{} (exit 0: {}, signaled: {}); expected spawn failures: {}/2; wait(-1) now -> {:?}",
-        reaped, n, clean, killed, failures_as_expected, none_left.map(|(p, _)| p)
+        "[init] all children reaped: {}/{} (exit 0: {}, signaled: {}); expected spawn failures: {}/3; audit ok: {}; wait(-1) now -> {:?}",
+        reaped, n, clean, killed, failures_as_expected, audit_ok, none_left.map(|(p, _)| p)
     );
-    let ok = reaped == n && clean == 3 && killed == 1 && failures_as_expected == 2
-        && none_left == Err(-errno::ECHILD);
+    let ok = reaped == n && clean == 4 && killed == 1 && failures_as_expected == 3
+        && audit_ok && none_left == Err(-errno::ECHILD);
     println!("[init] process-lifecycle check: {}", if ok { "PASS" } else { "FAIL" });
     if ok { 0 } else { 1 }
 }

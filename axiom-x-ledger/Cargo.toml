@@ -1,0 +1,9 @@
+[package]
+name = "axiom-x-ledger"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+description = "Hash-chained evidence ledger (SHA-256), shared by the kernel and user-space auditors"
+
+[dependencies]

@@ -28,7 +28,11 @@ pub const SYS_WAIT4: u64 = 61;
 /// Distinct from the declared `AxSpawn` (511), whose `SpawnRequest` ABI
 /// (caller-chosen entry/stack) is not implemented.
 pub const SYS_AX_SPAWN_MODULE: u64 = 520;
+/// Axiom-X (declared in axiom-x-sys as `AxGetEvidence`): read ledger record
+/// `seq` into a user buffer; `seq = u64::MAX` returns the record count.
+pub const SYS_AX_GET_EVIDENCE: u64 = 501;
 
+pub const EPERM: i64 = 1;
 pub const ENOENT: i64 = 2;
 pub const ENOEXEC: i64 = 8;
 pub const EBADF: i64 = 9;
@@ -54,9 +58,10 @@ pub const MAX_WRITE_LEN: u64 = 4096;
 /// kernel killed it (fault in ring 3). The scheduler then picks what runs.
 pub type ProcessEndHook = fn(pid: u32, parent: Option<u32>, code: i32);
 
-/// Creates a process from a named boot module as a child of `parent`;
+/// Creates a process from a named boot module as a child of `parent`
+/// holding `rights` (already checked to be a subset of the parent's);
 /// returns its PID or a negative errno (`-ENOENT`, `-ENOEXEC`, ...).
-pub type SpawnHook = fn(name: &str, parent: u32) -> i64;
+pub type SpawnHook = fn(name: &str, parent: u32, rights: axiom_x_capability::Rights) -> i64;
 
 /// Frees what a reaped process owned (address space, kernel stack);
 /// returns frames freed. Implemented by the boot crate, which owns memory.
@@ -109,6 +114,7 @@ pub fn mark_ended(code: i32) {
         }
         parent
     });
+    crate::governance::record_exit(pid, code);
     if let Some(hook) = PROCESS_END_HOOK.get() {
         hook(pid, parent, code);
     }
@@ -133,6 +139,16 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
     let (nr, a0, a1, a2) = (frame.rax, frame.rdi, frame.rsi, frame.rdx);
     let pid = current_pid();
 
+    // No dispatch without the right it requires.
+    if let Some(need) = crate::governance::required_right(nr) {
+        if !crate::governance::rights_of(pid).contains(need) {
+            crate::governance::record_syscall(pid, nr, a0, -EPERM, false);
+            log_syscall(pid, name_of(nr), nr, a0, -EPERM);
+            frame.rax = (-EPERM) as u64;
+            return frame_rsp;
+        }
+    }
+
     let result: i64 = match nr {
         SYS_WRITE => sys_write(a0, a1, a2),
         SYS_EXIT => {
@@ -143,6 +159,7 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
         SYS_GETPID => pid as i64,
         SYS_SCHED_YIELD => {
             frame.rax = 0;
+            crate::governance::record_syscall(pid, nr, 0, 0, true);
             return switch_away(frame_rsp);
         }
         SYS_NANOSLEEP => match sleep_ticks(a0) {
@@ -150,15 +167,18 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
                 // Result is written now: the frame is resumed after the wake.
                 frame.rax = 0;
                 log_syscall(pid, "nanosleep", nr, ticks, 0);
+                crate::governance::record_block(pid, nr, ticks);
                 crate::sched::block_current_for(ticks);
                 return switch_away(frame_rsp);
             }
             Err(e) => e,
         },
-        SYS_AX_SPAWN_MODULE => sys_spawn_module(pid, a0, a1),
+        SYS_AX_SPAWN_MODULE => sys_spawn_module(pid, a0, a1, a2),
+        SYS_AX_GET_EVIDENCE => sys_get_evidence(a0, a1, a2),
         SYS_WAIT4 => match sys_wait4(pid, a0 as i64, a1) {
             WaitOutcome::Done(r) => r,
             WaitOutcome::Block => {
+                crate::governance::record_block(pid, nr, a0);
                 // Restart semantics: when woken, re-execute the 2-byte
                 // `int 0x80` (RAX still holds the syscall number), which
                 // then finds the zombie. No half-done state survives a block.
@@ -177,13 +197,27 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
             timestamp_ns: 0,
         });
     }
-    log_syscall(pid, name_of(nr), nr, a0, result);
+    crate::governance::record_syscall(pid, nr, a0, result, true);
+    // Evidence reads are ledgered like every call, but not echoed to the
+    // console: an audit makes hundreds of them.
+    if nr != SYS_AX_GET_EVIDENCE {
+        log_syscall(pid, name_of(nr), nr, a0, result);
+    }
     frame.rax = result as u64;
     frame_rsp
 }
 
-/// Copy a module name from user memory and ask the spawn hook to start it.
-fn sys_spawn_module(parent: u32, name_ptr: u64, len: u64) -> i64 {
+/// Copy a module name from user memory and ask the spawn hook to start it,
+/// granting the child `rights_bits`, which must be a subset of the parent's.
+fn sys_spawn_module(parent: u32, name_ptr: u64, len: u64, rights_bits: u64) -> i64 {
+    use axiom_x_capability::Rights;
+    let requested = Rights::new(rights_bits);
+    let held = crate::governance::rights_of(parent);
+    if !held.contains(requested) {
+        // Escalation: asking for rights the parent does not hold.
+        crate::governance::record_create(parent, 0, requested, false, -EPERM);
+        return -EPERM;
+    }
     if len == 0 || len > MAX_MODULE_NAME {
         return -EINVAL;
     }
@@ -196,10 +230,42 @@ fn sys_spawn_module(parent: u32, name_ptr: u64, len: u64) -> i64 {
     let Ok(name) = core::str::from_utf8(&buf[..n]) else {
         return -EINVAL;
     };
-    match SPAWN_HOOK.get() {
-        Some(hook) => hook(name, parent),
+    let r = match SPAWN_HOOK.get() {
+        Some(hook) => hook(name, parent, requested),
         None => -ENOSYS,
+    };
+    if r > 0 {
+        crate::governance::record_create(parent, r as u32, requested, true, r);
+    } else {
+        crate::governance::record_create(parent, 0, requested, false, r);
     }
+    r
+}
+
+/// Size of one record as returned by `AX_GET_EVIDENCE`: encoding + digest.
+pub const EVIDENCE_RECORD_BYTES: u64 = axiom_x_ledger::RECORD_LEN as u64 + 32;
+
+/// `AX_GET_EVIDENCE(seq, buf, len)`: copy ledger record `seq` (encoded
+/// record, then its SHA-256 digest) to `buf`; returns the record count.
+fn sys_get_evidence(seq: u64, buf: u64, len: u64) -> i64 {
+    if seq == u64::MAX {
+        return crate::governance::ledger_summary().0 as i64;
+    }
+    if len < EVIDENCE_RECORD_BYTES {
+        return -EINVAL;
+    }
+    if !user_range_accessible(buf, EVIDENCE_RECORD_BYTES, true) {
+        return -EFAULT;
+    }
+    let Some((record, digest)) = crate::governance::ledger_get(seq) else {
+        return -ENOENT;
+    };
+    let enc = record.encode();
+    unsafe {
+        core::ptr::copy_nonoverlapping(enc.as_ptr(), buf as *mut u8, enc.len());
+        core::ptr::copy_nonoverlapping(digest.as_ptr(), (buf + enc.len() as u64) as *mut u8, 32);
+    }
+    crate::governance::ledger_summary().0 as i64
 }
 
 enum WaitOutcome {
@@ -246,7 +312,8 @@ fn sys_wait4(me: u32, which: i64, status_ptr: u64) -> WaitOutcome {
         (true, None) => WaitOutcome::Block,
         (true, Some((child, code))) => {
             if let Some(p) = table.remove(child) {
-                release(&p);
+                let frames = release(&p);
+                crate::governance::record_reap(me, child, frames);
             }
             if status_ptr != 0 {
                 unsafe { (status_ptr as *mut i32).write(wait_status(code)) };
@@ -310,6 +377,7 @@ fn name_of(nr: u64) -> &'static str {
         SYS_NANOSLEEP => "nanosleep",
         SYS_WAIT4 => "wait4",
         SYS_AX_SPAWN_MODULE => "ax_spawn_module",
+        SYS_AX_GET_EVIDENCE => "ax_get_evidence",
         _ => "unknown",
     }
 }

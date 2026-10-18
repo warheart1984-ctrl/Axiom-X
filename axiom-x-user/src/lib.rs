@@ -12,6 +12,9 @@
 use core::arch::asm;
 use core::fmt;
 
+pub use axiom_x_capability::Rights;
+pub use axiom_x_ledger as ledger;
+
 pub mod nr {
     pub const WRITE: u64 = 1;
     pub const SCHED_YIELD: u64 = 24;
@@ -21,10 +24,13 @@ pub mod nr {
     pub const WAIT4: u64 = 61;
     /// Axiom-X: start a boot module by name as a child process.
     pub const AX_SPAWN_MODULE: u64 = 520;
+    /// Axiom-X `AxGetEvidence`: read a ledger record (needs `Rights::EVIDENCE`).
+    pub const AX_GET_EVIDENCE: u64 = 501;
 }
 
 /// errno values the kernel returns (negated).
 pub mod errno {
+    pub const EPERM: i64 = 1;
     pub const ENOENT: i64 = 2;
     pub const ENOEXEC: i64 = 8;
     pub const ECHILD: i64 = 10;
@@ -32,6 +38,7 @@ pub mod errno {
 
     pub fn name(e: i64) -> &'static str {
         match -e {
+            EPERM => "EPERM",
             ENOENT => "ENOENT",
             ENOEXEC => "ENOEXEC",
             ECHILD => "ECHILD",
@@ -72,9 +79,28 @@ pub fn exit(code: i32) -> ! {
     }
 }
 
-/// Start the boot module `name` as a child; returns its PID or `-errno`.
-pub fn spawn(name: &str) -> i64 {
-    unsafe { syscall3(nr::AX_SPAWN_MODULE, name.as_ptr() as u64, name.len() as u64, 0) }
+/// Start the boot module `name` as a child holding `rights`, which must be a
+/// subset of the caller's own (else `-EPERM`); returns its PID or `-errno`.
+pub fn spawn(name: &str, rights: Rights) -> i64 {
+    unsafe { syscall3(nr::AX_SPAWN_MODULE, name.as_ptr() as u64, name.len() as u64, rights.bits()) }
+}
+
+/// Number of records ever appended to the kernel ledger.
+pub fn evidence_count() -> Result<u64, i64> {
+    let r = unsafe { syscall3(nr::AX_GET_EVIDENCE, u64::MAX, 0, 0) };
+    if r < 0 { Err(r) } else { Ok(r as u64) }
+}
+
+/// Ledger record `seq` with the digest the kernel computed for it.
+pub fn evidence(seq: u64) -> Result<(ledger::Record, ledger::Digest), i64> {
+    let mut buf = [0u8; ledger::RECORD_LEN + 32];
+    let r = unsafe { syscall3(nr::AX_GET_EVIDENCE, seq, buf.as_mut_ptr() as u64, buf.len() as u64) };
+    if r < 0 {
+        return Err(r);
+    }
+    let rec = ledger::Record::decode(buf[..ledger::RECORD_LEN].try_into().unwrap());
+    let digest: ledger::Digest = buf[ledger::RECORD_LEN..].try_into().unwrap();
+    Ok((rec, digest))
 }
 
 /// How a child ended, decoded from the `wait4` status word.

@@ -10,6 +10,11 @@ description = "Axiom-X user-space runtime (int 0x80 syscalls) and ring-3 test pr
 #   cargo build --release --target x86_64-unknown-none
 [workspace]
 
+[dependencies]
+# Same rights vocabulary and chain verifier as the kernel.
+axiom-x-capability = { path = "../axiom-x-capability", default-features = false }
+axiom-x-ledger = { path = "../axiom-x-ledger" }
+
 [lib]
 path = "src/lib.rs"
 test = false
@@ -37,6 +42,16 @@ test = false
 [[bin]]
 name = "elf-crash"
 path = "src/bin/elf-crash.rs"
+test = false
+
+[[bin]]
+name = "elf-noperm"
+path = "src/bin/elf-noperm.rs"
+test = false
+
+[[bin]]
+name = "elf-audit"
+path = "src/bin/elf-audit.rs"
 test = false
 
 [profile.release]

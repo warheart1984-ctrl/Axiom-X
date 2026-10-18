@@ -7,6 +7,8 @@ repository = { workspace = true }
 
 [dependencies]
 axiom-x-math = { path = "../axiom-x-math", default-features = false }
+axiom-x-capability = { path = "../axiom-x-capability", default-features = false }
+axiom-x-ledger = { path = "../axiom-x-ledger" }
 x86_64 = { workspace = true, features = ["abi_x86_interrupt"] }
 bitflags = { workspace = true }
 heapless = { workspace = true }

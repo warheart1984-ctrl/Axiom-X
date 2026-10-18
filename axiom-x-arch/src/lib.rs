@@ -21,6 +21,7 @@ pub mod process;
 pub mod interrupts;
 pub mod syscall;
 pub mod sched;
+pub mod governance;
 
 pub use process::*;
 pub use interrupts::*;

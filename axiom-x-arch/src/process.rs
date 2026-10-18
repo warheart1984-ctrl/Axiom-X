@@ -152,6 +152,9 @@ pub struct Process {
     pub wake_tick: u64,
     /// While `Blocked` in `wait4`: the child awaited (-1 = any, 0 = none).
     pub waiting_for: i64,
+    /// Capability rights held (`axiom_x_capability::Rights` bits). Kernel
+    /// threads hold all; a user process holds what its creator granted.
+    pub rights: u64,
 
     // Memory management
     pub page_table_root: PhysFrame<Size4KiB>,
@@ -563,6 +566,7 @@ pub fn init_kernel_process(
         saved_rsp: 0,
         wake_tick: 0,
         waiting_for: 0,
+        rights: u64::MAX,
         page_table_root,
         kernel_stack_top: stack_top,
         user_stack_top: None,
@@ -599,6 +603,7 @@ pub fn init_user_process(
         saved_rsp: 0,
         wake_tick: 0,
         waiting_for: 0,
+        rights: 0,
         page_table_root,
         kernel_stack_top,
         user_stack_top: Some(user_stack_top),
