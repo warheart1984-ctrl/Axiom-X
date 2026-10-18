@@ -275,7 +275,9 @@ pub fn exit_current(code: i32) -> ! {
     crate::syscall::mark_ended(code);
     let rsp = schedule(0);
     if rsp == 0 {
-        // Nothing runnable at all: the kernel has no work left.
+        // Nothing runnable at all: the kernel has no work left. Halting
+        // for good: flush buffered console output first.
+        crate::console::serial_sync();
         loop {
             unsafe { core::arch::asm!("cli; hlt") };
         }

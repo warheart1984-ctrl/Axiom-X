@@ -177,8 +177,12 @@ struct Persist {
     archived: u64,
 }
 
-static PERSIST: Mutex<Persist> =
-    Mutex::new(Persist { enabled: false, persisted: 0, boots: 0, capacity: 0, generation: 0, archived: 0 });
+/// Interrupt-safe: the init thread saves the ledger with interrupts on,
+/// while `AX_GET_EVIDENCE` reads `persisted` from inside a system call
+/// (interrupts off). With a plain spin lock, init preempted while holding
+/// it would leave that system call spinning forever.
+static PERSIST: crate::sync::IrqMutex<Persist> =
+    crate::sync::IrqMutex::new(Persist { enabled: false, persisted: 0, boots: 0, capacity: 0, generation: 0, archived: 0 });
 
 // ----------------------------------------------------------------------------
 // Fault injection (test only)
@@ -221,6 +225,9 @@ pub fn set_crash_point(p: CrashPoint) {
 fn crash_if(point: CrashPoint, what: &str) {
     if *CRASH.lock() == point {
         use core::fmt::Write;
+        // About to halt: drain buffered output, then write directly.
+        x86_64::instructions::interrupts::disable();
+        crate::console::serial_sync();
         let _ = writeln!(
             crate::SerialPort,
             "[ledger] CRASH INJECTION ({:?}): {}; halting now (simulated power loss)",

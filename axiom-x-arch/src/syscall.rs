@@ -453,6 +453,8 @@ fn sleep_ticks(ts_ptr: u64) -> Result<u64, i64> {
 
 /// No thread is runnable: nothing left for the kernel to do.
 fn idle_forever() -> ! {
+    // Halting for good: flush buffered console output first.
+    crate::console::serial_sync();
     loop {
         unsafe { core::arch::asm!("cli; hlt") };
     }

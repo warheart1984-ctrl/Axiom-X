@@ -27,6 +27,7 @@ pub mod clock;
 pub mod console;
 pub mod apic;
 pub mod latency;
+pub mod sync;
 pub mod fsys;
 
 pub use process::*;

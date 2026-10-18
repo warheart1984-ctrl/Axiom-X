@@ -11,6 +11,8 @@
 //! Status: `partial` — used for the persistent ledger and the file system
 //! on QEMU / Hyper-V IDE disks; no DMA, no secondary bus, no LBA48.
 
+use core::sync::atomic::{AtomicU64, Ordering};
+
 use spin::Mutex;
 
 use crate::{inb, inw, outb};
@@ -66,8 +68,9 @@ pub enum AtaError {
     OutOfRange,
 }
 
-/// Identified size of each drive (LBA28 sector count).
-static DRIVE_SECTORS: Mutex<[Option<u64>; 2]> = Mutex::new([None, None]);
+/// Identified size of each drive (LBA28 sector count; 0 = not identified).
+/// Atomics, not a lock: read from any context, written once at identify.
+static DRIVE_SECTORS: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
 /// Serializes port access across threads and syscalls.
 static PORT_LOCK: Mutex<()> = Mutex::new(());
 
@@ -138,13 +141,16 @@ pub fn identify_on(drive: Drive) -> Result<u64, AtaError> {
         }
         Ok(id[60] as u64 | ((id[61] as u64) << 16))
     })?;
-    DRIVE_SECTORS.lock()[drive as usize] = Some(sectors);
+    DRIVE_SECTORS[drive as usize].store(sectors, Ordering::Release);
     Ok(sectors)
 }
 
 /// Sectors on `drive` (None before `identify_on` succeeded).
 pub fn sectors_on(drive: Drive) -> Option<u64> {
-    DRIVE_SECTORS.lock()[drive as usize]
+    match DRIVE_SECTORS[drive as usize].load(Ordering::Acquire) {
+        0 => None,
+        n => Some(n),
+    }
 }
 
 fn select(drive: Drive, lba: u64, cmd: u8) -> Result<(), AtaError> {
