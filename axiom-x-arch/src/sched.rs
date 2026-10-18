@@ -79,15 +79,19 @@ pub unsafe extern "C" fn timer_entry() -> ! {
 }
 
 extern "C" fn timer_dispatch(frame_rsp: u64) -> u64 {
+    let t0 = crate::latency::now();
+    crate::latency::on_tick(t0);
     // EOI first: the switch below may not come back to this thread soon.
     crate::apic::tick_eoi();
     TICKS.fetch_add(1, Ordering::Relaxed);
     crate::console::poll_keyboard();
     // The interrupted thread was running, so it can always be resumed.
-    match schedule(frame_rsp) {
+    let rsp = match schedule(frame_rsp) {
         0 => frame_rsp,
         rsp => rsp,
-    }
+    };
+    crate::latency::end_timer(t0);
+    rsp
 }
 
 /// Save `frame_rsp` as the current thread's state, pick the next thread, and

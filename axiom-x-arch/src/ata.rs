@@ -72,7 +72,7 @@ static DRIVE_SECTORS: Mutex<[Option<u64>; 2]> = Mutex::new([None, None]);
 static PORT_LOCK: Mutex<()> = Mutex::new(());
 
 fn with_ports<R>(f: impl FnOnce() -> R) -> R {
-    x86_64::instructions::interrupts::without_interrupts(|| {
+    crate::latency::irq_off(crate::latency::Site::AtaCommand, || {
         let _g = PORT_LOCK.lock();
         f()
     })

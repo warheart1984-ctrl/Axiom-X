@@ -39,7 +39,7 @@ use alloc::boxed::Box;
 macro_rules! serial_print {
     ($($arg:tt)*) => {{
         use core::fmt::Write as _;
-        x86_64::instructions::interrupts::without_interrupts(|| {
+        axiom_x_arch::latency::irq_off(axiom_x_arch::latency::Site::KernelSerial, || {
             let _ = write!($crate::SerialWriter, $($arg)*);
         });
     }};
@@ -260,7 +260,7 @@ unsafe fn get_or_create_table(table: *mut PageTable, index: u64, user: bool) -> 
 /// Allocate and map a kernel stack below an unmapped guard page; returns
 /// its top. Stacks are never freed (bump allocation, like frames).
 pub fn alloc_kernel_stack() -> VirtAddr {
-    x86_64::instructions::interrupts::without_interrupts(|| unsafe { alloc_kernel_stack_inner() })
+    axiom_x_arch::latency::irq_off(axiom_x_arch::latency::Site::Allocator, || unsafe { alloc_kernel_stack_inner() })
 }
 
 unsafe fn alloc_kernel_stack_inner() -> VirtAddr {
@@ -313,7 +313,7 @@ unsafe fn unmap_kernel_page(virt: u64) -> Option<PhysFrame<Size4KiB>> {
 /// Free a stack from `alloc_kernel_stack` (by its top) and recycle its slot.
 /// It must not be the stack currently in use.
 pub fn free_kernel_stack(top: VirtAddr) -> u64 {
-    x86_64::instructions::interrupts::without_interrupts(|| unsafe {
+    axiom_x_arch::latency::irq_off(axiom_x_arch::latency::Site::Allocator, || unsafe {
         let base = top.as_u64() - KERNEL_STACK_SIZE;
         let mut freed = 0;
         for va in (base..top.as_u64()).step_by(4096) {
@@ -437,14 +437,14 @@ impl BootFrameAllocator {
 /// Return a frame to the allocator. The caller guarantees nothing maps or
 /// uses it any more.
 pub unsafe fn free_frame(frame: PhysFrame<Size4KiB>) {
-    x86_64::instructions::interrupts::without_interrupts(|| {
+    axiom_x_arch::latency::irq_off(axiom_x_arch::latency::Site::Allocator, || {
         BOOT_FRAME_ALLOCATOR.as_mut().expect("frame allocator").free(frame)
     });
 }
 
 /// Frames currently allocated (allocated minus freed).
 pub fn frames_in_use() -> u64 {
-    x86_64::instructions::interrupts::without_interrupts(|| unsafe {
+    axiom_x_arch::latency::irq_off(axiom_x_arch::latency::Site::Allocator, || unsafe {
         BOOT_FRAME_ALLOCATOR.as_ref().map_or(0, |a| a.allocated - a.freed)
     })
 }
@@ -497,7 +497,7 @@ unsafe fn init_boot_allocator(boot_info: &BootInfo) {
 unsafe fn alloc_boot_frame() -> Option<PhysFrame<Size4KiB>> {
     // Interrupts off: init allocates while user threads run and fault/exit
     // paths may free.
-    x86_64::instructions::interrupts::without_interrupts(|| BOOT_FRAME_ALLOCATOR.as_mut()?.alloc())
+    axiom_x_arch::latency::irq_off(axiom_x_arch::latency::Site::Allocator, || BOOT_FRAME_ALLOCATOR.as_mut()?.alloc())
 }
 
 // ============================================================================
@@ -591,7 +591,7 @@ pub fn serial_putc(c: u8) {
 /// Write string to serial
 pub fn serial_puts(s: &str) {
     // Atomic per call under preemption (see `serial_print!`).
-    x86_64::instructions::interrupts::without_interrupts(|| {
+    axiom_x_arch::latency::irq_off(axiom_x_arch::latency::Site::KernelSerial, || {
         for c in s.bytes() {
             serial_putc(c);
         }
@@ -1015,6 +1015,21 @@ fn check_tick_rate(ms: u64) {
     );
 }
 
+/// Print the interrupt-latency table to serial and reset it.
+fn print_latency_report() {
+    let mut buf = [0u8; 4096];
+    let mut w = axiom_x_arch::latency::BufWriter { buf: &mut buf, len: 0 };
+    axiom_x_arch::latency::report(&mut w);
+    let n = w.len;
+    serial_puts("[latency] after the self-tests:\n");
+    if let Ok(text) = core::str::from_utf8(&buf[..n]) {
+        for line in text.lines() {
+            serial_print!("[latency] {}\n", line);
+        }
+    }
+    axiom_x_arch::latency::reset();
+}
+
 /// Init process (PID 1)
 extern "C" fn init_process() -> ! {
     log::info!("Init process started");
@@ -1032,6 +1047,9 @@ extern "C" fn init_process() -> ! {
             serial_puts("[kernel] self-tests skipped (axiom.selftest=off)\n");
         } else {
             user::run_rounds();
+            // Interrupt latency over the self-tests (then start counting afresh
+            // for the interactive session).
+            print_latency_report();
         }
         // Interactive shell on the console; only returns if there is none.
         user::run_shell();

@@ -22,7 +22,7 @@ use spin::Mutex;
 
 use crate::syscall::{
     SYS_AX_FS_DELETE, SYS_AX_FS_INFO, SYS_AX_FS_INSTALL, SYS_AX_FS_LIST, SYS_AX_FS_READ, SYS_AX_FS_WRITE,
-    SYS_AX_GET_EVIDENCE, SYS_AX_PROC_LIST, SYS_AX_SPAWN_MODULE, SYS_CLOCK_GETTIME, SYS_EXIT, SYS_GETPID,
+    SYS_AX_GET_EVIDENCE, SYS_AX_LATENCY, SYS_AX_PROC_LIST, SYS_AX_SPAWN_MODULE, SYS_CLOCK_GETTIME, SYS_EXIT, SYS_GETPID,
     SYS_NANOSLEEP, SYS_READ, SYS_SCHED_YIELD, SYS_WAIT4, SYS_WRITE,
 };
 
@@ -40,7 +40,7 @@ pub fn required_right(nr: u64) -> Option<Rights> {
         // Reading the console is receiving from it.
         SYS_READ => Some(Rights::RECV),
         // Listing processes observes system state, like reading evidence.
-        SYS_AX_PROC_LIST => Some(Rights::EVIDENCE),
+        SYS_AX_PROC_LIST | SYS_AX_LATENCY => Some(Rights::EVIDENCE),
         // Files: observing needs READ, changing needs WRITE.
         SYS_AX_FS_LIST | SYS_AX_FS_INFO | SYS_AX_FS_READ => Some(Rights::READ),
         SYS_AX_FS_WRITE | SYS_AX_FS_DELETE | SYS_AX_FS_INSTALL => Some(Rights::WRITE),
@@ -81,7 +81,7 @@ pub fn record(kind: u32, decision: u32, pid: u32, subject: u32, nr: u64, arg: u6
         rights: rights.bits(),
         ..Record::default()
     };
-    x86_64::instructions::interrupts::without_interrupts(|| LEDGER.lock().append(r))
+    crate::latency::irq_off(crate::latency::Site::LedgerAppend, || LEDGER.lock().append(r))
 }
 
 /// Record a syscall decision.

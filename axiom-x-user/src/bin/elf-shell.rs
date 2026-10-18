@@ -11,7 +11,7 @@
 
 use axiom_x_user::ledger::{civil::DateTime, verify_window};
 use axiom_x_user::{
-    clock_ns, entry, errno, evidence, evidence_count, fs_delete, fs_info, fs_install, fs_list, fs_read, fs_write,
+    clock_ns, entry, errno, latency_report, evidence, evidence_count, fs_delete, fs_info, fs_install, fs_list, fs_read, fs_write,
     getpid, print, println, proc_list, read, spawn, wait, write, ExitStatus, FileInfo, ProcInfo, Rights, CLOCK_MONOTONIC, CLOCK_MONOTONIC_COARSE, CLOCK_REALTIME, CLOCK_REALTIME_COARSE,
 };
 
@@ -38,6 +38,7 @@ fn help() {
     println!("  install <module> <file>  copy a boot module into the file system");
     println!("  df                    file-system root hash, generation, space, mode");
     println!("  ledger                verify the newest evidence records' hash chain");
+    println!("  lat [reset]           kernel interrupts-off times and tick gaps (reset: clear)");
     println!("  exit                  leave (the kernel starts a new shell)");
 }
 
@@ -186,6 +187,15 @@ fn cmd_ledger() {
     }
 }
 
+fn cmd_lat(args: &str) {
+    let mut buf = [0u8; 4096];
+    let n = latency_report(&mut buf, args.trim() == "reset");
+    if n < 0 {
+        return report("lat", n);
+    }
+    write(1, &buf[..n as usize]);
+}
+
 fn report(what: &str, r: i64) {
     if r < 0 {
         println!("{}: {} ({})", what, r, errno::name(r));
@@ -303,6 +313,7 @@ fn execute(line: &str) -> bool {
         }
         "install" => cmd_install(rest),
         "df" => cmd_df(),
+        "lat" => cmd_lat(rest),
         "exit" => return false,
         other => println!("{}: unknown command (try 'help')", other),
     }

@@ -33,6 +33,9 @@ pub const SYS_AX_SPAWN_MODULE: u64 = 520;
 /// Axiom-X: copy process table entries (`PROC_ENTRY_BYTES` each) to a user
 /// buffer: pid, parent, state, rights, name. Needs `Rights::EVIDENCE`.
 pub const SYS_AX_PROC_LIST: u64 = 521;
+/// Axiom-X: interrupt-latency report as text (`latency::report`) into
+/// (buf, len); flags bit 0 = reset the counters afterwards. Needs EVIDENCE.
+pub const SYS_AX_LATENCY: u64 = 522;
 pub const PROC_ENTRY_BYTES: u64 = 48;
 
 /// Axiom-X file system (whole-file operations; see `fsys`):
@@ -172,6 +175,16 @@ pub unsafe extern "C" fn int80_entry() -> ! {
 /// Returns the RSP of the frame to resume: this one, or another thread's
 /// after `exit`.
 extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
+    // The whole call runs with interrupts off (int 0x80 is an interrupt
+    // gate): time it for the latency table.
+    let t0 = crate::latency::now();
+    let nr = unsafe { (*(frame_rsp as *const TrapFrame)).rax };
+    let rsp = syscall_dispatch_inner(frame_rsp);
+    crate::latency::end_syscall(nr, t0);
+    rsp
+}
+
+fn syscall_dispatch_inner(frame_rsp: u64) -> u64 {
     let frame = unsafe { &mut *(frame_rsp as *mut TrapFrame) };
     let (nr, a0, a1, a2) = (frame.rax, frame.rdi, frame.rsi, frame.rdx);
     let pid = current_pid();
@@ -204,6 +217,7 @@ extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
             }
         },
         SYS_AX_PROC_LIST => sys_proc_list(a0, a1),
+        SYS_AX_LATENCY => sys_latency(a0, a1, a2),
         SYS_AX_FS_LIST => sys_fs_list(a0, a1),
         SYS_AX_FS_INFO => sys_fs_info(a0),
         SYS_AX_FS_READ => sys_fs_read(a0, a1, a2, frame.r10),
@@ -481,6 +495,20 @@ fn copy_name(ptr: u64, len: u64, buf: &mut [u8; MAX_MODULE_NAME as usize]) -> Re
     core::str::from_utf8(&buf[..n]).map_err(|_| -EINVAL)
 }
 
+fn sys_latency(buf: u64, len: u64, flags: u64) -> i64 {
+    let len = len.min(8192);
+    if len == 0 || !user_range_accessible(buf, len, true) {
+        return -EFAULT;
+    }
+    let out = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len as usize) };
+    let mut w = crate::latency::BufWriter { buf: out, len: 0 };
+    crate::latency::report(&mut w);
+    if flags & 1 != 0 {
+        crate::latency::reset();
+    }
+    w.len as i64
+}
+
 fn sys_fs_list(buf: u64, max: u64) -> i64 {
     let max = max.min(64);
     if max == 0 {
@@ -642,6 +670,7 @@ fn name_of(nr: u64) -> &'static str {
         SYS_READ => "read",
         SYS_WRITE => "write",
         SYS_AX_PROC_LIST => "ax_proc_list",
+        SYS_AX_LATENCY => "ax_latency",
         SYS_AX_FS_LIST => "ax_fs_list",
         SYS_AX_FS_INFO => "ax_fs_info",
         SYS_AX_FS_READ => "ax_fs_read",

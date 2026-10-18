@@ -167,7 +167,7 @@ pub fn fs_errno(e: FsError) -> i64 {
 }
 
 fn with_fs<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    x86_64::instructions::interrupts::without_interrupts(|| f(&mut STATE.lock()))
+    crate::latency::irq_off(crate::latency::Site::FsOperation, || f(&mut STATE.lock()))
 }
 
 fn mounted(st: &mut State) -> Result<&mut Fs<SlaveDisk>, i64> {

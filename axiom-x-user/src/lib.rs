@@ -26,6 +26,8 @@ pub mod nr {
     pub const CLOCK_GETTIME: u64 = 228;
     /// Axiom-X: list processes (needs `Rights::EVIDENCE`).
     pub const AX_PROC_LIST: u64 = 521;
+    /// Axiom-X: interrupt-latency report (needs `Rights::EVIDENCE`).
+    pub const AX_LATENCY: u64 = 522;
     /// Axiom-X: start a boot module by name as a child process.
     pub const AX_SPAWN_MODULE: u64 = 520;
     /// Axiom-X `AxGetEvidence`: read a ledger record (needs `Rights::EVIDENCE`).
@@ -106,6 +108,12 @@ pub unsafe fn syscall4(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
         options(nostack)
     );
     ret
+}
+
+/// Kernel interrupt-latency report as text into `buf`; `reset` clears the
+/// counters afterwards. Returns the bytes written or `-errno`.
+pub fn latency_report(buf: &mut [u8], reset: bool) -> i64 {
+    unsafe { syscall3(nr::AX_LATENCY, buf.as_mut_ptr() as u64, buf.len() as u64, reset as u64) }
 }
 
 /// One file as listed by `fs_list`.
