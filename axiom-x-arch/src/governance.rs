@@ -390,6 +390,30 @@ fn attach_disk() -> PersistReport {
     if c.total > capacity {
         return refused("superblock claims more records than the disk holds", None, recovery);
     }
+    if recovery.superblock_fallback {
+        // A damaged newest copy fell back to an older superblock — but a
+        // hostile one-sector edit looks identical. If the archive holds a
+        // *validly signed* checkpoint claiming more records, this superblock
+        // is stale: silently dropping signed history must not pass.
+        if let Some(pk) = signer_public() {
+            for i in sb.archived..store::CHECKPOINT_SECTORS {
+                let mut sector = [0u8; store::SECTOR];
+                if ata::read_sector(store::CHECKPOINT_BASE + i, &mut sector).is_err() {
+                    break;
+                }
+                let Some(newer) = Checkpoint::decode_archive(&sector) else {
+                    break;
+                };
+                if newer.status(&pk) == SignatureStatus::Valid && newer.total > c.total {
+                    return refused(
+                        "rollback evidence: archive holds a newer signed checkpoint than the superblock",
+                        None,
+                        recovery,
+                    );
+                }
+            }
+        }
+    }
     // Signed history must be continued by the same key: a missing key
     // would silently strip signatures, a different one would let anyone
     // take over the chain.

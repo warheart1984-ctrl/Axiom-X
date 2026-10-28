@@ -177,6 +177,26 @@ fn verify_ledger(image: &str, pubkey: &str, raw: bool) -> Result<(Vec<u8>, u64),
         }
     }
 
+    // Rollback check: a damaged newest superblock copy falls back to the
+    // older one, whose lower `archived` count hides newer checkpoints.
+    // Any *validly signed* archive entry past `sb.archived` claiming more
+    // records proves this superblock is stale — one-sector rollbacks
+    // must not verify.
+    for i in sb.archived..store::CHECKPOINT_SECTORS {
+        let Some(newer) = sector(&img, store::CHECKPOINT_BASE + i)
+            .and_then(|s| Checkpoint::decode_archive(&s))
+        else {
+            break;
+        };
+        if newer.status(&trusted) == SignatureStatus::Valid && newer.total > c.total {
+            println!(
+                "FAIL: rollback evidence — archive entry {i} is a validly signed checkpoint with total {} > superblock {}",
+                newer.total, c.total
+            );
+            return Err(ExitCode::from(1));
+        }
+    }
+
     let (mut boots, mut denies) = (0, 0);
     for seq in 0..c.total {
         let (r, _) = slot(&img, seq).unwrap();

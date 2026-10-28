@@ -36,6 +36,16 @@ def read_exact(conn: socket.socket, n: int) -> bytes:
     return buf
 
 
+# Path allowlist: petitions may only ask for these upstream prefixes.
+# A right the guest holds (NET) should still buy a *bounded* reach.
+ALLOWED_PREFIXES = ("GET /v1/", "POST /v1/", "GET /models", "POST /chat")
+
+
+def allowed(payload: bytes) -> bool:
+    first = payload.split(b"\r\n", 1)[0]
+    return any(first.startswith(p.encode()) for p in ALLOWED_PREFIXES)
+
+
 def forward(payload: bytes) -> bytes:
     """Send the request bytes to the upstream and return response bytes.
 
@@ -44,6 +54,8 @@ def forward(payload: bytes) -> bytes:
     bytes). A non-200 or unreachable upstream still gets a framed reply:
     the petition was governed; the failure is evidence too.
     """
+    if not allowed(payload):
+        return b"HTTP/1.1 403 Proxy Denied\r\n\r\npath not in allowlist"
     try:
         req = urllib.request.Request(
             UPSTREAM, data=payload, headers={"Content-Type": "application/octet-stream"}

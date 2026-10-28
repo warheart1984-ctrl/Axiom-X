@@ -23,7 +23,7 @@ Every row is backed by an evidence file in `evidence/`.
 | `AX_MMAP` governed heap + user `GlobalAlloc` (Vec/String work) | enforced | `serial-mb2.log` (`elf-heap`, `elf-agent`) |
 | `AX_EGRESS` governed channel to host proxy over COM2 | enforced | `serial-mb2.log` (`ax_egress -> 74`), `tools/egress-proxy.py` |
 | Bounded rights: per-process frame quota + egress token bucket | enforced | `serial-mb2.log` (`owned X / 16384`, `refused (-11)`) |
-| Real agent workload (fs → heap → petition → result, all governed) | enforced | `serial-mb2.log` (`elf-workload` loop) |
+| Real agent workload (fs → heap → petition → result, all governed; upstream answer is environmental) | enforced | `serial-mb2.log` (`elf-workload` loop) |
 | Ledger persisted, crash-safe, Ed25519-signed, verified off-machine | enforced | `PERSIST-`, `CRASH-SAFETY-`, `SIGNED-LEDGER-EVIDENCE-2026-10-17.md` |
 | Clock, PS/2 keyboard + serial console, interactive shell | partial | `SHELL-`, `HYPERV-EVIDENCE-2026-10-18.md` |
 | AXFS file system: copy-on-write, hash-verified, ledger-anchored | partial | `FS-EVIDENCE-2026-10-18.md` |
