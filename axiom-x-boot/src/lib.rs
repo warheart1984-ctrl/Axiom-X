@@ -631,6 +631,12 @@ pub fn init_serial() {
     outb(COM1 + 0, 0x01); // Divisor low byte
     outb(COM1 + 1, 0x00); // Divisor high byte
     outb(COM1 + 3, 0x03); // 8N1, disable DLAB
+    // COM2: the governed egress channel (AX_EGRESS talks to the host proxy).
+    outb(0x2f8 + 1, 0x00);
+    outb(0x2f8 + 3, 0x80);
+    outb(0x2f8 + 0, 0x01);
+    outb(0x2f8 + 1, 0x00);
+    outb(0x2f8 + 3, 0x03);
     // Keep any byte already received (typed or piped in before boot).
     while inb(COM1 + 5) & 0x01 != 0 {
         axiom_x_arch::console::push_input(inb(COM1));

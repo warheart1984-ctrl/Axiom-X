@@ -18,10 +18,11 @@
 use axiom_x_user::{entry, errno, getpid, println, spawn, wait, ExitStatus, Rights};
 
 /// (module, rights granted, expected spawn result: 0 = success, else -errno)
-const PROGRAMS: [(&str, Rights, i64); 10] = [
+const PROGRAMS: [(&str, Rights, i64); 11] = [
     ("elf-hello", Rights::SEND, 0),
     ("elf-heap", Rights::new(Rights::SEND.bits() | Rights::ALLOC.bits()), 0),
     ("elf-agent", Rights::new(Rights::SEND.bits() | Rights::ALLOC.bits()), 0),
+    ("elf-egress", Rights::new(Rights::SEND.bits() | Rights::NET.bits()), 0),
     ("elf-fast", Rights::SEND, 0),
     ("elf-slow", Rights::SEND, 0),
     ("elf-crash", Rights::SEND, 0),

@@ -56,6 +56,9 @@ pub const SYS_AX_FS_INFO: u64 = 535;
 /// Axiom-X `AxMmap`: grow the caller's private heap by `a0` bytes;
 /// returns the base VA of the new (zeroed, RW+NX) region or -errno.
 pub const SYS_AX_MMAP: u64 = 536;
+/// Axiom-X `AxEgress`: send `a0`/`a1` request bytes over the governed
+/// channel and read the response into `a2`/`a3`; gated by `Rights::NET`.
+pub const SYS_AX_EGRESS: u64 = 537;
 pub const FS_ENTRY_BYTES: u64 = 96;
 
 /// Echo every syscall decision to the console (the ledger records them
@@ -71,6 +74,7 @@ pub const ENOEXEC: i64 = 8;
 pub const EBADF: i64 = 9;
 pub const ECHILD: i64 = 10;
 pub const EFAULT: i64 = 14;
+pub const EIO: i64 = 5;
 pub const ENOMEM: i64 = 12;
 pub const EINVAL: i64 = 22;
 pub const ENOSYS: i64 = 38;
@@ -122,6 +126,15 @@ static MMAP_HOOK: Once<MmapHook> = Once::new();
 
 pub fn set_mmap_hook(hook: MmapHook) {
     MMAP_HOOK.call_once(|| hook);
+}
+
+/// `AX_EGRESS` backend: send `req_len` request bytes from `req_ptr` (user
+/// VA) and return the response into `resp_ptr`/`resp_max`; -errno on failure.
+pub type EgressHook = fn(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u64) -> i64;
+static EGRESS_HOOK: Once<EgressHook> = Once::new();
+
+pub fn set_egress_hook(hook: EgressHook) {
+    EGRESS_HOOK.call_once(|| hook);
 }
 
 pub fn set_process_end_hook(hook: ProcessEndHook) {
@@ -290,6 +303,12 @@ fn syscall_dispatch_inner(frame_rsp: u64, t0: &mut u64) -> u64 {
         SYS_AX_SPAWN_MODULE => preemptible(nr, t0, || sys_spawn_module(pid, a0, a1, a2)),
         SYS_AX_GET_EVIDENCE => sys_get_evidence(a0, a1, a2),
         SYS_AX_MMAP => MMAP_HOOK.get().map_or(-ENOSYS, |h| h(pid, a0)),
+        SYS_AX_EGRESS => {
+            let a3 = frame.r10;
+            preemptible(nr, t0, || {
+                EGRESS_HOOK.get().map_or(-ENOSYS, |h| h(pid, a0, a1, a2, a3))
+            })
+        }
         SYS_WAIT4 => match sys_wait4(pid, a0 as i64, a1) {
             WaitOutcome::Done(r) => r,
             WaitOutcome::Block => {
@@ -729,6 +748,7 @@ fn name_of(nr: u64) -> &'static str {
         SYS_AX_SPAWN_MODULE => "ax_spawn_module",
         SYS_AX_GET_EVIDENCE => "ax_get_evidence",
         SYS_AX_MMAP => "ax_mmap",
+        SYS_AX_EGRESS => "ax_egress",
         _ => "unknown",
     }
 }

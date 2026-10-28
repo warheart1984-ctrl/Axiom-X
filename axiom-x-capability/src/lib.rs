@@ -108,6 +108,9 @@ pub const fn remove(&mut self, other: Self) {
     pub const PROGRAM_DEVICE: Self = Self(1 << 14);
     pub const RESET_DEVICE: Self = Self(1 << 15);
 
+    // Egress: petitioning the outside world through the governed channel.
+    pub const NET: Self = Self(1 << 16);
+
     // Capability management
     pub const DELEGATE: Self = Self(1 << 16);
     pub const REVOKE: Self = Self(1 << 17);

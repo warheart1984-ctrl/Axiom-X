@@ -43,6 +43,9 @@ pub mod nr {
     pub const AX_FS_INFO: u64 = 535;
     /// Grow the private heap (needs `Rights::ALLOC`); returns base VA or -errno.
     pub const AX_MMAP: u64 = 536;
+    /// Governed egress (needs `Rights::NET`); sends request bytes, returns
+    /// response length or -errno.
+    pub const AX_EGRESS: u64 = 537;
 }
 
 /// errno values the kernel returns (negated).
@@ -323,6 +326,14 @@ pub fn evidence(seq: u64) -> Result<(ledger::Record, ledger::Digest), i64> {
 /// per-process cap or out of frames, `-EPERM` without the right).
 pub fn mmap(len: usize) -> i64 {
     unsafe { syscall3(nr::AX_MMAP, len as u64, 0, 0) }
+}
+
+/// Send `req` over the governed egress channel (needs `Rights::NET`) and
+/// read the host proxy's response into `resp`. Returns the response
+/// length, or a negative errno (`-EIO` on channel timeout, `-EPERM`
+/// without the right). Every call is a ledgered governed action.
+pub fn egress(req: &[u8], resp: &mut [u8]) -> i64 {
+    unsafe { syscall4(nr::AX_EGRESS, req.as_ptr() as u64, req.len() as u64, resp.as_mut_ptr() as u64, resp.len() as u64) }
 }
 
 /// How a child ended, decoded from the `wait4` status word.

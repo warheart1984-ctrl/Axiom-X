@@ -217,10 +217,75 @@ fn mmap_hook(pid: u32, len: u64) -> i64 {
     base as i64
 }
 
+/// COM2: the governed egress channel. Requests go out framed as
+/// "AXEG" + len64 + payload; the host proxy replies "RESP" + len64 +
+/// payload. Every call is a ledgered governed action (Rights::NET).
+const COM2: u16 = 0x2f8;
+const EGRESS_REQ_MAX: usize = 4096;
+const EGRESS_RESP_MAX: usize = 8192;
+const EGRESS_TIMEOUT_NS: u64 = 10_000_000_000;
+
+fn com2_write(bytes: &[u8]) {
+    for &b in bytes {
+        while unsafe { axiom_x_arch::inb(COM2 + 5) } & 0x20 == 0 {}
+        unsafe { axiom_x_arch::outb(COM2, b) };
+    }
+}
+
+fn com2_read_exact(buf: &mut [u8], deadline: u64) -> bool {
+    for slot in buf.iter_mut() {
+        loop {
+            if unsafe { axiom_x_arch::inb(COM2 + 5) } & 0x01 != 0 {
+                *slot = unsafe { axiom_x_arch::inb(COM2) };
+                break;
+            }
+            if axiom_x_arch::clock::monotonic_ns() > deadline {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// `AX_EGRESS` backend: frame the request to COM2, wait for the framed
+/// response, copy it into the caller's buffer. Runs under the caller's
+/// page tables, so user VAs copy directly.
+fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u64) -> i64 {
+    use axiom_x_arch::syscall::{EFAULT, EINVAL, EIO, user_range_accessible};
+    let _ = pid;
+    if req_len == 0 || req_len > EGRESS_REQ_MAX as u64 || resp_max == 0 || resp_max > EGRESS_RESP_MAX as u64 {
+        return -EINVAL;
+    }
+    if !user_range_accessible(req_ptr, req_len, false) || !user_range_accessible(resp_ptr, resp_max, true) {
+        return -EFAULT;
+    }
+    static mut REQ: [u8; EGRESS_REQ_MAX] = [0; EGRESS_REQ_MAX];
+    unsafe {
+        core::ptr::copy_nonoverlapping(req_ptr as *const u8, core::ptr::addr_of_mut!(REQ) as *mut u8, req_len as usize);
+    }
+    com2_write(b"AXEG");
+    com2_write(&req_len.to_le_bytes());
+    com2_write(unsafe {
+        core::slice::from_raw_parts(core::ptr::addr_of!(REQ) as *const u8, req_len as usize)
+    });
+
+    let deadline = axiom_x_arch::clock::monotonic_ns() + EGRESS_TIMEOUT_NS;
+    let mut magic = [0u8; 4];
+    let mut lenb = [0u8; 8];
+    if !com2_read_exact(&mut magic, deadline) || !com2_read_exact(&mut lenb, deadline) || &magic != b"RESP" {
+        return -EIO;
+    }
+    let n = (u64::from_le_bytes(lenb) as usize).min(resp_max as usize);
+    if !com2_read_exact(unsafe { core::slice::from_raw_parts_mut(resp_ptr as *mut u8, n) }, deadline) {
+        return -EIO;
+    }
+    n as i64
+}
+
 /// Rights the kernel grants user-space init. Everything any process can
 /// ever hold descends from this set: init can only pass on subsets.
 const INIT_RIGHTS: Rights = Rights::new(
-    Rights::SEND.bits() | Rights::SPAWN.bits() | Rights::DELEGATE.bits() | Rights::EVIDENCE.bits() | Rights::ALLOC.bits(),
+    Rights::SEND.bits() | Rights::SPAWN.bits() | Rights::DELEGATE.bits() | Rights::EVIDENCE.bits() | Rights::ALLOC.bits() | Rights::NET.bits(),
 );
 
 /// Ledger the grant for a process the kernel itself created (the rights
@@ -551,6 +616,7 @@ pub fn install_hooks() {
     axiom_x_arch::syscall::set_module_bytes_hook(module_bytes_hook);
     axiom_x_arch::syscall::set_release_hook(release_process);
     axiom_x_arch::syscall::set_mmap_hook(mmap_hook);
+    axiom_x_arch::syscall::set_egress_hook(egress_hook);
 }
 
 /// Start one round: every embedded program plus the user-space init.
@@ -673,7 +739,8 @@ const SHELL_RIGHTS: Rights = Rights::new(
         | Rights::EVIDENCE.bits()
         | Rights::READ.bits()
         | Rights::WRITE.bits()
-        | Rights::ALLOC.bits(),
+        | Rights::ALLOC.bits()
+        | Rights::NET.bits(),
 );
 
 /// Run the shell on the console forever, restarting it when it exits (like

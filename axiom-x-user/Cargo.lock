@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "axiom-x-agent"
+version = "0.1.0"
+dependencies = [
+ "axiom-x-user",
+]
+
+[[package]]
 name = "axiom-x-capability"
 version = "0.1.0"
 dependencies = [

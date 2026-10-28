@@ -27,6 +27,10 @@ path = "src/bin/elf-hello.rs"
 [[bin]]
 name = "elf-heap"
 path = "src/bin/elf-heap.rs"
+
+[[bin]]
+name = "elf-egress"
+path = "src/bin/elf-egress.rs"
 test = false
 
 [[bin]]

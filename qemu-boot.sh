@@ -100,7 +100,7 @@ if [ -n "${SHELL_INPUT:-}" ]; then
     timeout "$SECS" qemu-system-x86_64 -cdrom "$ISO" -boot d \
         -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
         -drive "file=$FS_DISK,format=raw,if=ide,index=1,media=disk,cache=writethrough" \
-        -serial stdio -display none -no-reboot -m 256M \
+        -serial stdio -serial tcp:127.0.0.1:4445,server,nowait -display none -no-reboot -m 256M \
         -monitor unix:/tmp/axiomx-mon.sock,server,nowait \
         < "$SHELL_INPUT" > evidence/serial-mb2.log 2>evidence/tmp/qemu-stderr.log || true
     exit 0
@@ -124,7 +124,7 @@ fi
 timeout "$SECS" qemu-system-x86_64 -cdrom "$ISO" -boot d \
     -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
     -drive "file=$FS_DISK,format=raw,if=ide,index=1,media=disk,cache=writethrough" \
-    -serial file:evidence/serial-mb2.log -display none -no-reboot \
+    -serial file:evidence/serial-mb2.log -serial tcp:127.0.0.1:4445,server,nowait -display none -no-reboot \
     -d int,cpu_reset -D evidence/qemu-mb2.log -m 256M || true
 
 echo "=== serial ==="

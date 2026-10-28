@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Axiom-X egress proxy: bridges the kernel's governed COM2 channel to
+llm-gateway (or any HTTP endpoint).
+
+Protocol (both directions, little-endian length):
+  guest -> host:  b"AXEG" + u64 len + payload   (the HTTP request bytes)
+  host -> guest:  b"RESP" + u64 len + payload   (the HTTP response bytes)
+
+QEMU wiring: `-serial tcp:127.0.0.1:4445,server,nowait` (COM2).
+Every petition the guest makes is a governed, ledgered action; this proxy
+is the only door out, so policy (rate limits, allowlists) can live here.
+"""
+
+import socket
+import struct
+import sys
+import urllib.request
+
+LISTEN = ("127.0.0.1", 4445)
+UPSTREAM = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8080"
+
+
+def read_exact(conn: socket.socket, n: int) -> bytes:
+    buf = b""
+    while len(buf) < n:
+        chunk = conn.recv(n - len(buf))
+        if not chunk:
+            raise ConnectionError("guest closed")
+        buf += chunk
+    return buf
+
+
+def forward(payload: bytes) -> bytes:
+    """Send the request bytes to the upstream and return response bytes.
+
+    The guest sends a request line + headers; we hand the whole blob to the
+    upstream as a POST body for now (llm-gateway's /v1/chat accepts raw
+    bytes). A non-200 or unreachable upstream still gets a framed reply:
+    the petition was governed; the failure is evidence too.
+    """
+    try:
+        req = urllib.request.Request(
+            UPSTREAM, data=payload, headers={"Content-Type": "application/octet-stream"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.read()
+    except Exception as e:
+        return f"HTTP/1.1 503 Proxy Error\r\n\r\n{e}".encode()
+
+
+def serve(conn: socket.socket):
+    while True:
+        magic = read_exact(conn, 4)
+        if magic != b"AXEG":
+            raise ValueError(f"bad magic {magic!r}")
+        (n,) = struct.unpack("<Q", read_exact(conn, 8))
+        payload = read_exact(conn, n)
+        resp = forward(payload)
+        conn.sendall(b"RESP" + struct.pack("<Q", len(resp)) + resp)
+
+
+def main():
+    # QEMU's `-serial tcp:...,server` listens; the proxy connects as client.
+    print(f"[egress-proxy] connecting to QEMU at {LISTEN}, upstream {UPSTREAM}", flush=True)
+    while True:
+        try:
+            conn = socket.create_connection(LISTEN, timeout=10)
+        except OSError:
+            continue
+        print("[egress-proxy] connected to guest COM2", flush=True)
+        try:
+            serve(conn)
+        except Exception as e:
+            print(f"[egress-proxy] session ended: {e}", flush=True)
+        finally:
+            conn.close()
+
+
+if __name__ == "__main__":
+    main()
