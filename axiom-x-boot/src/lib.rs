@@ -343,6 +343,7 @@ pub fn free_address_space(root: PhysFrame<Size4KiB>) -> u64 {
             if level > 1 && !entry.flags().contains(PageTableFlags::HUGE_PAGE) {
                 freed += free_level(frame.start_address().as_u64(), level - 1);
             }
+            serial_print!("[free_level] L{} table {:#x} entry->frame {:#x}\n", level, table, frame.start_address().as_u64());
             free_frame(frame);
             freed += 1;
         }
@@ -429,9 +430,39 @@ impl BootFrameAllocator {
 
     fn free(&mut self, frame: PhysFrame<Size4KiB>) {
         let addr = frame.start_address().as_u64();
+        // Debug: catch a double-free at the moment it happens — if `addr`
+        // is already linked, the list walk finds it. The cap bounds the
+        // walk if the chain is already corrupt.
+        let mut head = self.free_head;
+        let mut walked = 0u64;
+        while head != 0 && walked <= self.freed {
+            assert!(head != addr, "frame {:#x} freed while already on the free list", addr);
+            head = unsafe { ptr::read(head as *const u64) };
+            walked += 1;
+        }
         unsafe { ptr::write(addr as *mut u64, self.free_head) };
         self.free_head = addr;
         self.freed += 1;
+    }
+}
+
+/// Walk the free list through the identity map. Returns nodes walked and
+/// whether the chain is sane: a walk longer than `freed` means a cycle or
+/// a frame recorded twice (double-free); unaligned/out-of-region nodes
+/// mean corruption.
+pub(crate) fn free_list_scan() -> (u64, bool) {
+    unsafe {
+        let a = BOOT_FRAME_ALLOCATOR.as_ref().expect("frame allocator");
+        let mut head = a.free_head;
+        let mut nodes = 0u64;
+        while head != 0 {
+            nodes += 1;
+            if nodes > a.freed || head & 0xFFF != 0 || head >= a.end {
+                return (nodes, false);
+            }
+            head = ptr::read(head as *const u64);
+        }
+        (nodes, true)
     }
 }
 

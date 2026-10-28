@@ -214,6 +214,17 @@ fn spawn_embedded(prog: &UserProgram) {
         USER_CODE_VA, USER_STACK_VA + 4096, kstack, root, None, EMBEDDED_RIGHTS, prog.name,
     )
     .expect("create user process");
+    // Leak-hunt (a): the process must run on the same PML4 we mapped into.
+    let stored = axiom_x_arch::interrupts::process_table()
+        .with_locked(|ps| ps.iter().find(|p| p.pid == pid).map(|p| p.page_table_root));
+    if stored != Some(root) {
+        serial_print!(
+            "[kernel] ROOT MISMATCH pid {}: mapped {:#x} stored {:?}\n",
+            pid,
+            root.start_address().as_u64(),
+            stored.map(|f| f.start_address().as_u64())
+        );
+    }
     kernel_grant(pid, EMBEDDED_RIGHTS);
     serial_print!(
         "[kernel] spawned '{}' as pid {}: {} bytes embedded, PML4 {:#x}\n",
@@ -259,9 +270,19 @@ fn spawn_elf_loader(name: &str, bytes: &[u8], parent: Option<u32>, rights: Right
     }
 
     let kstack = alloc_kernel_stack();
+    let root_frame = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(root));
     let pid = axiom_x_arch::sched::spawn_user_process(
-        _entry, ELF_STACK_TOP, kstack, PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(root)), parent, rights, name,
+        _entry, ELF_STACK_TOP, kstack, root_frame, parent, rights, name,
     ).map_err(|_| -ENOMEM)?;
+    // Leak-hunt (a): same PML4 that the loader mapped into.
+    let stored = axiom_x_arch::interrupts::process_table()
+        .with_locked(|ps| ps.iter().find(|p| p.pid == pid).map(|p| p.page_table_root));
+    if stored != Some(root_frame) {
+        serial_print!(
+            "[kernel] ROOT MISMATCH pid {}: mapped {:#x} stored {:?}\n",
+            pid, root, stored.map(|f| f.start_address().as_u64())
+        );
+    }
     serial_print!(
         "[kernel] loaded ELF '{}' as pid {} (parent {}): {} bytes, PML4 {:#x}\n",
         name,
@@ -557,6 +578,12 @@ pub fn run_rounds() {
             }
         }
         let (n, freed) = reap();
+        // Leak-hunt (b): free-list duplicates would let two processes
+        // share a frame — scan after every reap.
+        let (nodes, ok) = crate::free_list_scan();
+        if !ok {
+            serial_print!("[kernel] FREE-LIST ANOMALY: {} nodes walked\n", nodes);
+        }
         let left = axiom_x_arch::interrupts::process_table().count();
         after[round] = frames_in_use();
         flush_ledger();
