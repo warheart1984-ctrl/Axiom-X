@@ -275,14 +275,45 @@ fn com2_read_exact(buf: &mut [u8], deadline: u64) -> bool {
     true
 }
 
+/// Per-pid egress token bucket: the NET right grants the ability to
+/// petition; the rate limit bounds it. `BURST` petitions may go
+/// back-to-back; thereafter `RATE` per second.
+const EGRESS_RATE_PER_SEC: u32 = 2;
+const EGRESS_BURST: u32 = 4;
+static mut EGRESS_BUCKETS: heapless::Vec<(u32, u64, u32), 128> = heapless::Vec::new();
+
+fn egress_allow(pid: u32, now: u64) -> bool {
+    let v = unsafe { &mut *core::ptr::addr_of_mut!(EGRESS_BUCKETS) };
+    let idx = match v.iter().position(|(p, _, _)| *p == pid) {
+        Some(i) => i,
+        None => {
+            if v.push((pid, now, EGRESS_BURST)).is_err() {
+                return false;
+            }
+            v.len() - 1
+        }
+    };
+    let (_, last, tokens) = &mut v[idx];
+    let refill = (((now - *last) / 1_000_000_000) * EGRESS_RATE_PER_SEC as u64) as u32;
+    *tokens = (*tokens + refill).min(EGRESS_BURST);
+    *last = now;
+    if *tokens == 0 {
+        return false;
+    }
+    *tokens -= 1;
+    true
+}
+
 /// `AX_EGRESS` backend: frame the request to COM2, wait for the framed
 /// response, copy it into the caller's buffer. Runs under the caller's
 /// page tables, so user VAs copy directly.
 fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u64) -> i64 {
-    use axiom_x_arch::syscall::{EFAULT, EINVAL, EIO, user_range_accessible};
-    let _ = pid;
+    use axiom_x_arch::syscall::{EAGAIN, EFAULT, EINVAL, EIO, user_range_accessible};
     if req_len == 0 || req_len > EGRESS_REQ_MAX as u64 || resp_max == 0 || resp_max > EGRESS_RESP_MAX as u64 {
         return -EINVAL;
+    }
+    if !egress_allow(pid, axiom_x_arch::clock::monotonic_ns()) {
+        return -EAGAIN;
     }
     if !user_range_accessible(req_ptr, req_len, false) || !user_range_accessible(resp_ptr, resp_max, true) {
         return -EFAULT;
