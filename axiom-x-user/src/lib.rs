@@ -41,6 +41,8 @@ pub mod nr {
     pub const AX_FS_DELETE: u64 = 533;
     pub const AX_FS_INSTALL: u64 = 534;
     pub const AX_FS_INFO: u64 = 535;
+    /// Grow the private heap (needs `Rights::ALLOC`); returns base VA or -errno.
+    pub const AX_MMAP: u64 = 536;
 }
 
 /// errno values the kernel returns (negated).
@@ -49,6 +51,7 @@ pub mod errno {
     pub const ENOENT: i64 = 2;
     pub const ENOEXEC: i64 = 8;
     pub const ECHILD: i64 = 10;
+    pub const ENOMEM: i64 = 12;
     pub const EIO: i64 = 5;
     pub const EFAULT: i64 = 14;
     pub const EINVAL: i64 = 22;
@@ -62,6 +65,7 @@ pub mod errno {
             ENOENT => "ENOENT",
             ENOEXEC => "ENOEXEC",
             ECHILD => "ECHILD",
+            ENOMEM => "ENOMEM",
             EINVAL => "EINVAL",
             EIO => "EIO",
             EFAULT => "EFAULT",
@@ -311,6 +315,14 @@ pub fn evidence(seq: u64) -> Result<(ledger::Record, ledger::Digest), i64> {
     let rec = ledger::Record::decode(buf[..ledger::RECORD_LEN].try_into().unwrap());
     let digest: ledger::Digest = buf[ledger::RECORD_LEN..].try_into().unwrap();
     Ok((rec, digest))
+}
+
+/// Grow the process's private heap by `len` bytes (needs `Rights::ALLOC`).
+/// Returns the base virtual address of the new zeroed region (page-aligned,
+/// RW+NX), or a negative errno (`-EINVAL` on bad size, `-ENOMEM` over the
+/// per-process cap or out of frames, `-EPERM` without the right).
+pub fn mmap(len: usize) -> i64 {
+    unsafe { syscall3(nr::AX_MMAP, len as u64, 0, 0) }
 }
 
 /// How a child ended, decoded from the `wait4` status word.

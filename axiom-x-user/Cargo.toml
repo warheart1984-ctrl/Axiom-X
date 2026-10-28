@@ -22,6 +22,10 @@ test = false
 [[bin]]
 name = "elf-hello"
 path = "src/bin/elf-hello.rs"
+
+[[bin]]
+name = "elf-heap"
+path = "src/bin/elf-heap.rs"
 test = false
 
 [[bin]]

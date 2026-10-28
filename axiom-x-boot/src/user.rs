@@ -167,10 +167,60 @@ use axiom_x_arch::governance::{self, Rights};
 /// Rights the kernel grants the embedded regression programs: console only.
 const EMBEDDED_RIGHTS: Rights = Rights::SEND;
 
+/// Private heap region: slot 1, well above ELF segments (~0x8000_0000_0000)
+/// and the 4-page stack under 0x8040_0000_0000. `AX_MMAP` grows upward.
+const USER_HEAP_BASE: u64 = 0x0000_0081_0000_0000;
+/// Per-process heap cap: bounds a governed ALLOC right, not a hard limit.
+const USER_HEAP_MAX: u64 = 32 * 1024 * 1024;
+
+/// Per-pid heap cursor; 128 live processes max, entries are per-boot
+/// (freed address spaces are not recycled by pid).
+static mut HEAP_CURSORS: heapless::Vec<(u32, u64), 128> = heapless::Vec::new();
+
+/// `AX_MMAP` backend: map `len` bytes of zeroed RW/NX user memory into the
+/// caller's slot-1 heap region. Runs under the caller's page tables but
+/// writes PTEs by physical address, so no CR3 dance is needed.
+fn mmap_hook(pid: u32, len: u64) -> i64 {
+    use axiom_x_arch::syscall::{EINVAL, ENOMEM, ENOSYS};
+    if len == 0 || len > USER_HEAP_MAX {
+        return -EINVAL;
+    }
+    let bytes = (len + 4095) & !4095u64;
+    let cursors = unsafe { &mut *core::ptr::addr_of_mut!(HEAP_CURSORS) };
+    let idx = match cursors.iter().position(|(p, _)| *p == pid) {
+        Some(i) => i,
+        None => {
+            if cursors.push((pid, USER_HEAP_BASE)).is_err() {
+                return -ENOMEM;
+            }
+            cursors.len() - 1
+        }
+    };
+    let base = cursors[idx].1;
+    if base - USER_HEAP_BASE + bytes > USER_HEAP_MAX {
+        return -ENOMEM;
+    }
+    let Some(root) = axiom_x_arch::interrupts::process_table()
+        .with_locked(|ps| ps.iter().find(|p| p.pid == pid).map(|p| p.page_table_root.start_address().as_u64()))
+    else {
+        return -ENOSYS;
+    };
+    for i in 0..(bytes / 4096) {
+        let Some(frame) = (unsafe { crate::alloc_boot_frame() }) else {
+            return -ENOMEM;
+        };
+        let phys = frame.start_address().as_u64();
+        unsafe { core::ptr::write_bytes(phys as *mut u8, 0, 4096) };
+        map_page_in(root, base + i * 4096, phys, user_rw());
+    }
+    cursors[idx].1 = base + bytes;
+    base as i64
+}
+
 /// Rights the kernel grants user-space init. Everything any process can
 /// ever hold descends from this set: init can only pass on subsets.
 const INIT_RIGHTS: Rights = Rights::new(
-    Rights::SEND.bits() | Rights::SPAWN.bits() | Rights::DELEGATE.bits() | Rights::EVIDENCE.bits(),
+    Rights::SEND.bits() | Rights::SPAWN.bits() | Rights::DELEGATE.bits() | Rights::EVIDENCE.bits() | Rights::ALLOC.bits(),
 );
 
 /// Ledger the grant for a process the kernel itself created (the rights
@@ -500,6 +550,7 @@ pub fn install_hooks() {
     axiom_x_arch::syscall::set_spawn_hook(spawn_module_hook);
     axiom_x_arch::syscall::set_module_bytes_hook(module_bytes_hook);
     axiom_x_arch::syscall::set_release_hook(release_process);
+    axiom_x_arch::syscall::set_mmap_hook(mmap_hook);
 }
 
 /// Start one round: every embedded program plus the user-space init.
@@ -621,7 +672,8 @@ const SHELL_RIGHTS: Rights = Rights::new(
         | Rights::DELEGATE.bits()
         | Rights::EVIDENCE.bits()
         | Rights::READ.bits()
-        | Rights::WRITE.bits(),
+        | Rights::WRITE.bits()
+        | Rights::ALLOC.bits(),
 );
 
 /// Run the shell on the console forever, restarting it when it exits (like

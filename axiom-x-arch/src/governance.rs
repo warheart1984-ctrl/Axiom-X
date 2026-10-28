@@ -22,7 +22,7 @@ use spin::Mutex;
 
 use crate::syscall::{
     SYS_AX_FS_DELETE, SYS_AX_FS_INFO, SYS_AX_FS_INSTALL, SYS_AX_FS_LIST, SYS_AX_FS_READ, SYS_AX_FS_WRITE,
-    SYS_AX_GET_EVIDENCE, SYS_AX_LATENCY, SYS_AX_PROC_LIST, SYS_AX_SPAWN_MODULE, SYS_CLOCK_GETTIME, SYS_EXIT, SYS_GETPID,
+    SYS_AX_GET_EVIDENCE, SYS_AX_LATENCY, SYS_AX_MMAP, SYS_AX_PROC_LIST, SYS_AX_SPAWN_MODULE, SYS_CLOCK_GETTIME, SYS_EXIT, SYS_GETPID,
     SYS_NANOSLEEP, SYS_READ, SYS_SCHED_YIELD, SYS_WAIT4, SYS_WRITE,
 };
 
@@ -45,6 +45,8 @@ pub fn required_right(nr: u64) -> Option<Rights> {
         SYS_AX_FS_LIST | SYS_AX_FS_INFO | SYS_AX_FS_READ => Some(Rights::READ),
         SYS_AX_FS_WRITE | SYS_AX_FS_DELETE | SYS_AX_FS_INSTALL => Some(Rights::WRITE),
         SYS_AX_SPAWN_MODULE => Some(Rights::SPAWN),
+        // Growing your address space allocates frames: gated like any alloc.
+        SYS_AX_MMAP => Some(Rights::ALLOC),
         SYS_AX_GET_EVIDENCE => Some(Rights::EVIDENCE),
         SYS_EXIT | SYS_GETPID | SYS_SCHED_YIELD | SYS_NANOSLEEP | SYS_WAIT4 | SYS_CLOCK_GETTIME => None,
         // Unknown calls need no right: they fail with -ENOSYS anyway.

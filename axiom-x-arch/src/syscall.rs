@@ -53,6 +53,9 @@ pub const SYS_AX_FS_INSTALL: u64 = 534;
 /// info(buf) (READ): root[32], generation u64, files u32, writable u32,
 /// free sectors u64
 pub const SYS_AX_FS_INFO: u64 = 535;
+/// Axiom-X `AxMmap`: grow the caller's private heap by `a0` bytes;
+/// returns the base VA of the new (zeroed, RW+NX) region or -errno.
+pub const SYS_AX_MMAP: u64 = 536;
 pub const FS_ENTRY_BYTES: u64 = 96;
 
 /// Echo every syscall decision to the console (the ledger records them
@@ -68,6 +71,7 @@ pub const ENOEXEC: i64 = 8;
 pub const EBADF: i64 = 9;
 pub const ECHILD: i64 = 10;
 pub const EFAULT: i64 = 14;
+pub const ENOMEM: i64 = 12;
 pub const EINVAL: i64 = 22;
 pub const ENOSYS: i64 = 38;
 
@@ -110,6 +114,15 @@ pub fn set_module_bytes_hook(hook: ModuleBytesHook) {
 static PROCESS_END_HOOK: Once<ProcessEndHook> = Once::new();
 static SPAWN_HOOK: Once<SpawnHook> = Once::new();
 static RELEASE_HOOK: Once<ReleaseHook> = Once::new();
+
+/// `AX_MMAP` backend: map `len` bytes of zeroed RW/NX memory into `pid`'s
+/// address space; returns the base VA or a negative errno.
+pub type MmapHook = fn(pid: u32, len: u64) -> i64;
+static MMAP_HOOK: Once<MmapHook> = Once::new();
+
+pub fn set_mmap_hook(hook: MmapHook) {
+    MMAP_HOOK.call_once(|| hook);
+}
 
 pub fn set_process_end_hook(hook: ProcessEndHook) {
     PROCESS_END_HOOK.call_once(|| hook);
@@ -276,6 +289,7 @@ fn syscall_dispatch_inner(frame_rsp: u64, t0: &mut u64) -> u64 {
         },
         SYS_AX_SPAWN_MODULE => preemptible(nr, t0, || sys_spawn_module(pid, a0, a1, a2)),
         SYS_AX_GET_EVIDENCE => sys_get_evidence(a0, a1, a2),
+        SYS_AX_MMAP => MMAP_HOOK.get().map_or(-ENOSYS, |h| h(pid, a0)),
         SYS_WAIT4 => match sys_wait4(pid, a0 as i64, a1) {
             WaitOutcome::Done(r) => r,
             WaitOutcome::Block => {
@@ -714,6 +728,7 @@ fn name_of(nr: u64) -> &'static str {
         SYS_CLOCK_GETTIME => "clock_gettime",
         SYS_AX_SPAWN_MODULE => "ax_spawn_module",
         SYS_AX_GET_EVIDENCE => "ax_get_evidence",
+        SYS_AX_MMAP => "ax_mmap",
         _ => "unknown",
     }
 }
