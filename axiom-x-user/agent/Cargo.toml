@@ -1,0 +1,17 @@
+[package]
+name = "axiom-x-agent"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Axiom-X agent runtime: user-space heap over AX_MMAP plus the syscall surface"
+
+[dependencies]
+axiom-x-user = { path = ".." }
+
+[lib]
+path = "src/lib.rs"
+test = false
+
+[[bin]]
+name = "elf-agent"
+path = "src/bin/elf-agent.rs"

@@ -281,27 +281,30 @@ impl ElfLoader {
                 continue;
             }
 
-            let mut virt = file_end & !0xFFF;
+            // Zero only [file_end, mem_end): the first page may share file
+            // data below file_end — zeroing the whole page would erase it.
+            let mut virt = file_end;
             while virt < mem_end {
+                let page = virt & !0xFFFu64;
                 let phys = page_maps
                     .iter()
-                    .find(|pm| pm.virt == virt)
+                    .find(|pm| pm.virt == page)
                     .map(|pm| pm.phys)
                     .ok_or("BSS page not mapped")?;
 
                 map_page_in(
                     kernel_root,
-                    virt,
+                    page,
                     phys,
                     PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
                 );
 
-                let bytes = (mem_end - virt).min(PAGE_SIZE);
+                let bytes = ((page + PAGE_SIZE) - virt).min(mem_end - virt);
                 unsafe {
                     ptr::write_bytes(virt as *mut u8, 0, bytes as usize);
                 }
 
-                virt += PAGE_SIZE;
+                virt += bytes;
             }
         }
 

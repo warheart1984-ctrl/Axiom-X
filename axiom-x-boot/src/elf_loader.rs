@@ -276,6 +276,9 @@ impl ElfLoader {
                     x86_64::structures::paging::PageTableFlags::PRESENT
                         | x86_64::structures::paging::PageTableFlags::WRITABLE,
                 );
+                // A not-present structure entry may be cached from an
+                // earlier walk; new PTEs need the flush before use.
+                x86_64::instructions::tlb::flush(x86_64::VirtAddr::new(page_virt));
 
                 // Copy from kernel-space ELF data to the now-accessible user page.
                 let src = unsafe { elf_data.as_ptr().add(ph.p_offset as usize + copied as usize) };
@@ -311,30 +314,34 @@ impl ElfLoader {
                 continue;
             }
 
-            let mut virt = file_end & !0xFFFu64;
+            // Zero only [file_end, mem_end): the first page may share file
+            // data below file_end — zeroing the whole page would erase it.
+            let mut virt = file_end;
             while virt < mem_end {
+                let page = virt & !0xFFFu64;
                 let phys = page_maps
                     .iter()
-                    .find(|pm| pm.virt == virt)
+                    .find(|pm| pm.virt == page)
                     .map(|pm| pm.phys)
                     .ok_or("BSS page not mapped")?;
 
                 map_page_in(
                     kernel_root,
-                    virt,
+                    page,
                     phys,
                     x86_64::structures::paging::PageTableFlags::PRESENT
                         | x86_64::structures::paging::PageTableFlags::WRITABLE,
                 );
+                x86_64::instructions::tlb::flush(x86_64::VirtAddr::new(page));
 
-                let bytes = (mem_end - virt).min(PAGE_SIZE);
+                let bytes = ((page + PAGE_SIZE) - virt).min(mem_end - virt);
                 unsafe {
                     ptr::write_bytes(virt as *mut u8, 0, bytes as usize);
                 }
 
-                let _ = unsafe { crate::unmap_kernel_page(virt) };
+                let _ = unsafe { crate::unmap_kernel_page(page) };
 
-                virt += PAGE_SIZE;
+                virt += bytes;
             }
         }
 

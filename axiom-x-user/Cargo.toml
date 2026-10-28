@@ -9,6 +9,7 @@ description = "Axiom-X user-space runtime (int 0x80 syscalls) and ring-3 test pr
 # x86_64-unknown-none, built separately from the kernel workspace:
 #   cargo build --release --target x86_64-unknown-none
 [workspace]
+members = [".", "agent"]
 
 [dependencies]
 # Same rights vocabulary and chain verifier as the kernel.
