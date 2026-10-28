@@ -177,6 +177,30 @@ const USER_HEAP_MAX: u64 = 32 * 1024 * 1024;
 /// (freed address spaces are not recycled by pid).
 static mut HEAP_CURSORS: heapless::Vec<(u32, u64), 128> = heapless::Vec::new();
 
+/// Per-process frame quota: total frames a process may own (page tables,
+/// segment pages, kernel stack, heap). A bounded right, not just binary.
+const FRAME_QUOTA: u64 = 16384; // 64 MiB
+static mut OWNED_FRAMES: heapless::Vec<(u32, u64), 128> = heapless::Vec::new();
+
+fn owned(pid: u32) -> Option<u64> {
+    unsafe { &*core::ptr::addr_of!(OWNED_FRAMES) }
+        .iter()
+        .find(|(p, _)| *p == pid)
+        .map(|(_, n)| *n)
+}
+
+fn owned_add(pid: u32, n: i64) {
+    let v = unsafe { &mut *core::ptr::addr_of_mut!(OWNED_FRAMES) };
+    match v.iter_mut().find(|(p, _)| *p == pid) {
+        Some(e) => e.1 = (e.1 as i64 + n).max(0) as u64,
+        None => {
+            if n > 0 {
+                let _ = v.push((pid, n as u64));
+            }
+        }
+    }
+}
+
 /// `AX_MMAP` backend: map `len` bytes of zeroed RW/NX user memory into the
 /// caller's slot-1 heap region. Runs under the caller's page tables but
 /// writes PTEs by physical address, so no CR3 dance is needed.
@@ -197,7 +221,10 @@ fn mmap_hook(pid: u32, len: u64) -> i64 {
         }
     };
     let base = cursors[idx].1;
-    if base - USER_HEAP_BASE + bytes > USER_HEAP_MAX {
+    let pages = bytes / 4096;
+    if base - USER_HEAP_BASE + bytes > USER_HEAP_MAX
+        || owned(pid).unwrap_or(0) + pages > FRAME_QUOTA
+    {
         return -ENOMEM;
     }
     let Some(root) = axiom_x_arch::interrupts::process_table()
@@ -214,6 +241,7 @@ fn mmap_hook(pid: u32, len: u64) -> i64 {
         map_page_in(root, base + i * 4096, phys, user_rw());
     }
     cursors[idx].1 = base + bytes;
+    owned_add(pid, pages as i64);
     base as i64
 }
 
@@ -360,6 +388,7 @@ fn user_rw() -> PageTableFlags {
 fn spawn_elf_loader(name: &str, bytes: &[u8], parent: Option<u32>, rights: Rights) -> Result<u32, i64> {
     use axiom_x_arch::syscall::ENOEXEC;
     const ENOMEM: i64 = 12;
+    let frames_before = crate::frames_in_use();
 
     // Validate ELF header
     let (_entry, _phnum) = ElfLoader::validate(bytes).map_err(|why| {
@@ -398,6 +427,7 @@ fn spawn_elf_loader(name: &str, bytes: &[u8], parent: Option<u32>, rights: Right
             pid, root, stored.map(|f| f.start_address().as_u64())
         );
     }
+    owned_add(pid, (crate::frames_in_use() - frames_before) as i64);
     serial_print!(
         "[kernel] loaded ELF '{}' as pid {} (parent {}): {} bytes, PML4 {:#x}\n",
         name,
@@ -489,11 +519,13 @@ pub fn mount_fs() {
 fn release_process(p: &Process) -> u64 {
     let aspace = crate::free_address_space(p.page_table_root);
     let kstack = crate::free_kernel_stack(p.kernel_stack_top);
+    let freed = aspace + kstack;
+    owned_add(p.pid, -(freed as i64));
     serial_print!(
-        "[kernel] release pid {}: aspace {} + kstack {} frames\n",
-        p.pid, aspace, kstack
+        "[kernel] release pid {}: aspace {} + kstack {} frames (owned {} / {})\n",
+        p.pid, aspace, kstack, owned(p.pid).unwrap_or(0), FRAME_QUOTA
     );
-    aspace + kstack
+    freed
 }
 
 /// Attach the persistent ledger (before this boot appends anything) and
