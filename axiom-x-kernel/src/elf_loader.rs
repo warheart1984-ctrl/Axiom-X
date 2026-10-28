@@ -335,21 +335,10 @@ impl ElfLoader {
 
 /// Allocate one physical frame for `owner_pid` using the boot frame allocator.
 fn alloc_one_frame(owner_pid: u32) -> Result<u64, &'static str> {
-    let result = alloc_frames(AllocRequest {
-        count: 1,
-        region_type: RegionType::KernelRwData,
-        owner_pid,
-        flags: RegionFlags::READ | RegionFlags::WRITE,
-        alignment: 1,
-    })
-    .map_err(|_| "Out of physical frames")?;
-
-    match result {
-        axiom_x_math::memory_algebra::AllocResult::Success(region) => {
-            Ok(region.base.0 * 4096)
-        }
-        _ => Err("Frame allocation returned non-success"),
-    }
+    let _ = owner_pid;
+    let frame = unsafe { axiom_x_boot::alloc_boot_frame() }
+        .ok_or("Out of physical frames")?;
+    Ok(frame.start_address().as_u64())
 }
 
 #[cfg(test)]

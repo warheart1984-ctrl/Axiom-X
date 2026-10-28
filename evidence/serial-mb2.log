@@ -13,8 +13,8 @@ Initializing CPU features...
 Initializing architecture...
   PS/2: present true, config 0x71 -> 0x61, enable-scanning reply Some(250), 0 stale bytes flushed
 Calibrating clock (RTC + TSC, 1-2 s)...
-  RTC: 2026-10-28 15:17:31 (no time zone)  TSC: 3839.710 MHz
-  Tick: local APIC timer at 100 Hz (APIC base 0xfee00000, 62775800 counts/s, 627758 per tick); PIT IRQ0 masked
+  RTC: 2026-10-28 16:51:01 (no time zone)  TSC: 4377.805 MHz
+  Tick: local APIC timer at 100 Hz (APIC base 0xfee00000, 62711800 counts/s, 627118 per tick); PIT IRQ0 masked
 Initializing movie subsystem...
 Creating process table...
   ProcessTable: 544792 bytes
@@ -23,24 +23,24 @@ Creating init process...
   Init PID: 1 (kernel stack top 0xffff800008011000)
 Starting scheduler...
 PID 1 (init) running on its own stack; interrupts enabled
-[clock] tick check (local APIC timer): 100 ticks in 1.003 s (TSC) = 99.6 Hz, expected 100 Hz
+[clock] tick check (local APIC timer): 101 ticks in 1.010 s (TSC) = 99.9 Hz, expected 100 Hz
 [ledger] signing key provisioned; public key 5b82c607bffbf55da01a58b242584edb208cb412e030244ddfc7b7c579705f8a
-[ledger] boot 10: verified 660 persisted records from genesis and the checkpoint signature; resuming chain at seq 660 (head 845cc402b9e3d5c5...); signing new checkpoints; 34 checkpoints archived
-[fs] mounted AXFS: 0 files, root 9f1dcbc35c350d60.., matches ledger anchor #548; read-write
+[ledger] boot 17: verified 2450 persisted records from genesis and the checkpoint signature; resuming chain at seq 2450 (head 9e631afc28c4ad0f...); signing new checkpoints; 51 checkpoints archived
+[fs] mounted AXFS: 0 files, root 9f1dcbc35c350d60.., matches ledger anchor #1637; read-write
 [kernel] === round 1: frames in use 283 ===
 hello from ring 3
 [syscall] pid=2 write(nr=1, a0=0x1) -> 18
-[syscall] pid=2 write(nr=1, a0=0x1) -> -14
 [kernel] spawned 'hello' as pid 2: 171 bytes embedded, PML4 0xc7b000
-ring 3: kernel pointer refused with -EFAULT
-[syscall] pid=2 write(nr=1, a0=0x1) -> 44
-[syscall] pid=2 exit(nr=60, a0=0x0) -> 0
-[kernel] pid 2 (parent 0) exited with code 0
+[syscall] pid=2 write(nr=1, a0=0x1) -> -14
 [kernel] spawned 'probe' as pid 3: 27 bytes embedded, PML4 0xc91000
 [kernel] spawned 'spin-A' as pid 4: 74 bytes embedded, PML4 0xca7000
+ring 3: kernel pointer refused with -EFAULT
+[syscall] pid=2 write(nr=1, a0=0x1) -> 44
 [kernel] spawned 'spin-B' as pid 5: 74 bytes embedded, PML4 0xcbd000
 [kernel] pid=3 killed: page fault in ring 3 at rip=0x800000000a (0xffff800000100000)
 [kernel] pid 3 (parent 0) killed by signal 11
+[syscall] pid=2 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 2 (parent 0) exited with code 0
 [kernel] loaded ELF 'elf-init' as pid 6 (parent 0): 20952 bytes, PML4 0xcd3000
 [syscall] pid=6 getpid(nr=39, a0=0x0) -> 6
 [init] user-space init running as pid 6
@@ -49,66 +49,295 @@ ring 3: kernel pointer refused with -EFAULT
 [syscall] pid=5 write(nr=1, a0=0x1) -> 14
 [user A] tick
 [syscall] pid=4 write(nr=1, a0=0x1) -> 14
-[kernel] loaded ELF 'elf-hello' as pid 7 (parent 6): 16880 bytes, PML4 0xcef000
+[kernel] loaded ELF 'elf-hello' as pid 7 (parent 6): 16880 bytes, PML4 0xcf4000
 [syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034cf) -> 7
-[user B] tick
-[syscall] pid=5 write(nr=1, a0=0x1) -> 14
-[user A] tick
-[syscall] pid=4 write(nr=1, a0=0x1) -> 14
-[kernel] pid=6 killed: page fault in ring 3 at rip=0x80000027f6 (0x80000027f6)
-[kernel] pid 6 (parent 0) killed by signal 11
 [syscall] pid=7 getpid(nr=39, a0=0x0) -> 7
+[init] spawn elf-hello rights 0x80 -> pid 7
+[syscall] pid=6 write(nr=1, a0=0x1) -> 44
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
 [kernel] pid=7 killed: page fault in ring 3 at rip=0x0 (0x0)
-[kernel] pid 7 (parent 0) killed by signal 11
-[user B] tick
-[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[kernel] pid 7 (parent 6) killed by signal 11
+[kernel] loaded ELF 'elf-fast' as pid 8 (parent 6): 16800 bytes, PML4 0xd12000
 [user A] tick
 [syscall] pid=4 write(nr=1, a0=0x1) -> 14
-[user A] tick
-[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[syscall] pid=8 getpid(nr=39, a0=0x0) -> 8
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034e0) -> 8
+[init] spawn elf-fast rights 0x80 -> pid 8
+[syscall] pid=6 write(nr=1, a0=0x1) -> 43
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[kernel] loaded ELF 'elf-slow' as pid 9 (parent 6): 16800 bytes, PML4 0xd2f000
+[syscall] pid=9 getpid(nr=39, a0=0x0) -> 9
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034d8) -> 9
+[init] spawn elf-slow rights 0x80 -> pid 9
+[syscall] pid=6 write(nr=1, a0=0x1) -> 43
+[elf-fast] pid 8 woke 1/5 at ~100 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[syscall] pid=9 nanosleep(nr=35, a0=0x19) -> 0
 [user B] tick
 [syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[kernel] loaded ELF 'elf-crash' as pid 10 (parent 6): 16800 bytes, PML4 0xd4c000
 [user A] tick
 [syscall] pid=4 write(nr=1, a0=0x1) -> 14
-[syscall] pid=4 exit(nr=60, a0=0x0) -> 0
-[kernel] pid 4 (parent 0) exited with code 0
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034e8) -> 10
+[syscall] pid=10 getpid(nr=39, a0=0x0) -> 10
+[init] spawn elf-crash rights 0x80 -> pid 10
+[syscall] pid=6 write(nr=1, a0=0x1) -> 45
+[elf-slow] pid 9 woke 1/2 at ~250 ms (sleep -> 0)
+[syscall] pid=9 write(nr=1, a0=0x1) -> 50
 [user B] tick
 [syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[syscall] pid=9 nanosleep(nr=35, a0=0x19) -> 0
+[elf-fast] pid 8 woke 2/5 at ~200 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[kernel] loaded ELF 'elf-noperm' as pid 11 (parent 6): 16800 bytes, PML4 0xd69000
+[elf-crash] pid 10 reading a kernel address
+[syscall] pid=10 write(nr=1, a0=0x1) -> 44
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034f1) -> 11
+[elf-slow] pid 9 woke 2/2 at ~500 ms (sleep -> 0)
+[syscall] pid=9 write(nr=1, a0=0x1) -> 50
+[syscall] pid=11 write(nr=1, a0=0x1) -> -1
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[syscall] pid=11 ax_spawn_module(nr=520, a0=0x8000002210) -> -1
 [syscall] pid=5 exit(nr=60, a0=0x0) -> 0
 [kernel] pid 5 (parent 0) exited with code 0
-[free_level] L1 table 0xc80000 entry->frame 0xc7c000
-[free_level] L1 table 0xc80000 entry->frame 0xc7d000
-[free_level] L2 table 0xc7f000 entry->frame 0xc80000
-[free_level] L3 table 0xc7e000 entry->frame 0xc7f000
+[syscall] pid=9 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 9 (parent 6) exited with code 0
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[elf-fast] pid 8 woke 3/5 at ~300 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[init] spawn elf-noperm rights 0x0 -> pid 11
+[syscall] pid=6 write(nr=1, a0=0x1) -> 45
+[kernel] pid=10 killed: page fault in ring 3 at rip=0x800000119b (0xffff800000100000)
+[kernel] pid 10 (parent 6) killed by signal 11
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[kernel] ELF 'elf-bad-wx' failed to load: W^X violation: segment is both writable and executable
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034fb) -> -12
+[init] spawn elf-bad-wx rights 0x80 -> -12 (?)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 47
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[elf-fast] pid 8 woke 4/5 at ~400 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[syscall] pid=4 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 4 (parent 0) exited with code 0
+[syscall] pid=11 ax_spawn_module(nr=520, a0=0x8000002219) -> -1
+[syscall] pid=8 nanosleep(nr=35, a0=0xa) -> 0
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003505) -> -2
+[init] spawn no-such-program rights 0x80 -> -2 (ENOENT)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 56
+[syscall] pid=11 ax_fs_list(nr=530, a0=0x803ffff8c8) -> -1
+[elf-fast] pid 8 woke 5/5 at ~500 ms (sleep -> 0)
+[syscall] pid=8 write(nr=1, a0=0x1) -> 50
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034cf) -> -1
+[init] spawn elf-hello rights 0x2000080 -> -1 (EPERM)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 54
+[kernel] release pid 7: aspace 14 + kstack 16 frames
+[syscall] pid=6 wait4(nr=61, a0=0x7) -> 7
+[init] reaped pid 7: killed by signal 11
+[syscall] pid=6 write(nr=1, a0=0x1) -> 41
+[kernel] release pid 9: aspace 13 + kstack 16 frames
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 9
+[init] reaped pid 9: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 40
+[kernel] release pid 10: aspace 13 + kstack 16 frames
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 10
+[syscall] pid=11 ax_fs_read(nr=531, a0=0x8000002223) -> -1
+[init] reaped pid 10: killed by signal 11
+[syscall] pid=6 write(nr=1, a0=0x1) -> 42
+[syscall] pid=11 ax_fs_write(nr=532, a0=0x800000223f) -> -1
+[syscall] pid=8 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 8 (parent 6) exited with code 0
+[syscall] pid=11 ax_fs_delete(nr=533, a0=0x8000002223) -> -1
+[syscall] pid=11 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 11 (parent 6) exited with code 0
+[kernel] release pid 8: aspace 13 + kstack 16 frames
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 8
+[init] reaped pid 8: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 40
+[kernel] release pid 11: aspace 13 + kstack 16 frames
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 11
+[init] reaped pid 11: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 41
+[kernel] loaded ELF 'elf-audit' as pid 12 (parent 6): 25048 bytes, PML4 0xd85000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003618) -> 12
+[syscall] pid=12 getpid(nr=39, a0=0x0) -> 12
+[audit] pid 12: verifying ledger records 2149..2549 (of 2549)
+[syscall] pid=12 write(nr=1, a0=0x1) -> 62
+[audit] chain intact: 400 records, head 9ace82a769c46619... (denies 10, faults 10, creates 26, reaps 25)
+[syscall] pid=12 write(nr=1, a0=0x1) -> 105
+[audit] forged record 2349 detected: yes
+[syscall] pid=12 write(nr=1, a0=0x1) -> 41
+[audit] ledger audit: PASS
+[syscall] pid=12 write(nr=1, a0=0x1) -> 27
+[syscall] pid=12 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 12 (parent 6) exited with code 0
+[kernel] release pid 12: aspace 15 + kstack 16 frames
+[syscall] pid=6 wait4(nr=61, a0=0xc) -> 12
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> -10
+[init] all children reaped: 5/5 (exit 0: 3, signaled: 2); expected spawn failures: 2/3; audit ok: true; wait(-1) now -> Err(-10)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 129
+[init] process-lifecycle check: FAIL
+[syscall] pid=6 write(nr=1, a0=0x1) -> 37
+[syscall] pid=6 exit(nr=60, a0=0x1) -> 0
+[kernel] pid 6 (parent 0) exited with code 1
 [kernel] release pid 2: aspace 6 + kstack 16 frames
-[free_level] L1 table 0xc96000 entry->frame 0xc92000
-[free_level] L1 table 0xc96000 entry->frame 0xc93000
-[free_level] L2 table 0xc95000 entry->frame 0xc96000
-[free_level] L3 table 0xc94000 entry->frame 0xc95000
 [kernel] release pid 3: aspace 6 + kstack 16 frames
-[free_level] L1 table 0xcac000 entry->frame 0xca8000
-[free_level] L1 table 0xcac000 entry->frame 0xca9000
-[free_level] L2 table 0xcab000 entry->frame 0xcac000
-[free_level] L3 table 0xcaa000 entry->frame 0xcab000
 [kernel] release pid 4: aspace 6 + kstack 16 frames
-[free_level] L1 table 0xcc2000 entry->frame 0xcbe000
-[free_level] L1 table 0xcc2000 entry->frame 0xcbf000
-[free_level] L2 table 0xcc1000 entry->frame 0xcc2000
-[free_level] L3 table 0xcc0000 entry->frame 0xcc1000
 [kernel] release pid 5: aspace 6 + kstack 16 frames
-[free_level] L1 table 0xcd6000 entry->frame 0x105000
-[free_level] L1 table 0xcd6000 entry->frame 0x106000
-[free_level] L1 table 0xcd6000 entry->frame 0x107000
-[free_level] L1 table 0xcd6000 entry->frame 0x108000
-[free_level] L1 table 0xcd6000 entry->frame 0x109000
-[free_level] L2 table 0xcd5000 entry->frame 0xcd6000
-[free_level] L1 table 0xcdb000 entry->frame 0xcde000
-[free_level] L1 table 0xcdb000 entry->frame 0xcdd000
-[free_level] L1 table 0xcdb000 entry->frame 0xcdc000
-[free_level] L1 table 0xcdb000 entry->frame 0xcda000
-[free_level] L2 table 0xcd5000 entry->frame 0xcdb000
-[free_level] L3 table 0xcd4000 entry->frame 0xcd5000
 [kernel] release pid 6: aspace 14 + kstack 16 frames
-[free_level] L1 table 0xcf2000 entry->frame 0x105000
-KERNEL PANIC: panicked at axiom-x-boot/src/lib.rs:439:13:
-frame 0x105000 freed while already on the free list
+[ledger] persisted 206 new records to disk
+[kernel] ledger: 3168 records, head 68a5bc21bda04d6c...
+[kernel] round 1: kernel started 5, kernel reaped 5 (118 frames); 1 process records left; frames in use 283 -> 286
+[kernel] === round 2: frames in use 286 ===
+[kernel] spawned 'hello' as pid 13: 171 bytes embedded, PML4 0xcf3000
+hello from ring 3
+[syscall] pid=13 write(nr=1, a0=0x1) -> 18
+[syscall] pid=13 write(nr=1, a0=0x1) -> -14
+ring 3: kernel pointer refused with -EFAULT
+[syscall] pid=13 write(nr=1, a0=0x1) -> 44
+[kernel] spawned 'probe' as pid 14: 27 bytes embedded, PML4 0xce2000
+[kernel] spawned 'spin-A' as pid 15: 74 bytes embedded, PML4 0xcc4000
+[kernel] spawned 'spin-B' as pid 16: 74 bytes embedded, PML4 0xcae000
+[kernel] loaded ELF 'elf-init' as pid 17 (parent 0): 20952 bytes, PML4 0xc98000
+[kernel] pid=14 killed: page fault in ring 3 at rip=0x800000000a (0xffff800000100000)
+[kernel] pid 14 (parent 0) killed by signal 11
+[syscall] pid=17 getpid(nr=39, a0=0x0) -> 17
+[syscall] pid=13 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 13 (parent 0) exited with code 0
+[init] user-space init running as pid 17
+[syscall] pid=17 write(nr=1, a0=0x1) -> 41
+[user A] tick
+[syscall] pid=15 write(nr=1, a0=0x1) -> 14
+[user B] tick
+[syscall] pid=16 write(nr=1, a0=0x1) -> 14
+[kernel] loaded ELF 'elf-hello' as pid 18 (parent 17): 16880 bytes, PML4 0xd2d000
+[syscall] pid=17 ax_spawn_module(nr=520, a0=0x80000034cf) -> 18
+[user A] tick
+[syscall] pid=15 write(nr=1, a0=0x1) -> 14
+[kernel] pid=17 killed: page fault in ring 3 at rip=0x8000000787 (0xffffffffffffffd2)
+[kernel] pid 17 (parent 0) killed by signal 11
+[kernel] pid=18 killed: page fault in ring 3 at rip=0x8000000000 (0xd6)
+[kernel] pid 18 (parent 0) killed by signal 11
+[user B] tick
+[syscall] pid=16 write(nr=1, a0=0x1) -> 14
+[user A] tick
+[syscall] pid=15 write(nr=1, a0=0x1) -> 14
+[user B] tick
+[syscall] pid=16 write(nr=1, a0=0x1) -> 14
+[user A] tick
+[syscall] pid=15 write(nr=1, a0=0x1) -> 14
+[user B] tick
+[syscall] pid=16 write(nr=1, a0=0x1) -> 14
+[user A] tick
+[syscall] pid=15 write(nr=1, a0=0x1) -> 14
+[syscall] pid=15 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 15 (parent 0) exited with code 0
+[user B] tick
+[syscall] pid=16 write(nr=1, a0=0x1) -> 14
+[syscall] pid=16 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 16 (parent 0) exited with code 0
+[kernel] release pid 13: aspace 6 + kstack 16 frames
+[kernel] release pid 14: aspace 6 + kstack 16 frames
+[kernel] release pid 15: aspace 6 + kstack 16 frames
+[kernel] release pid 16: aspace 6 + kstack 16 frames
+[kernel] release pid 17: aspace 14 + kstack 16 frames
+[kernel] release pid 18: aspace 14 + kstack 16 frames
+[ledger] persisted 34 new records to disk
+[kernel] ledger: 3202 records, head 304a29c9d2a2bfa5...
+[kernel] round 2: kernel started 5, kernel reaped 6 (148 frames); 1 process records left; frames in use 286 -> 286
+[kernel] === round 3: frames in use 286 ===
+[kernel] spawned 'hello' as pid 19: 171 bytes embedded, PML4 0xd80000
+hello from ring 3
+[syscall] pid=19 write(nr=1, a0=0x1) -> 18
+[syscall] pid=19 write(nr=1, a0=0x1) -> -14
+[kernel] spawned 'probe' as pid 20: 27 bytes embedded, PML4 0xd6c000
+[kernel] spawned 'spin-A' as pid 21: 74 bytes embedded, PML4 0xc89000
+[kernel] pid=20 killed: page fault in ring 3 at rip=0x800000000a (0xffff800000100000)
+[kernel] pid 20 (parent 0) killed by signal 11
+ring 3: kernel pointer refused with -EFAULT
+[syscall] pid=19 write(nr=1, a0=0x1) -> 44
+[kernel] spawned 'spin-B' as pid 22: 74 bytes embedded, PML4 0xc9f000
+[kernel] loaded ELF 'elf-init' as pid 23 (parent 0): 20952 bytes, PML4 0xcb5000
+[syscall] pid=23 getpid(nr=39, a0=0x0) -> 23
+[syscall] pid=19 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 19 (parent 0) exited with code 0
+[init] user-space init running as pid 23
+[syscall] pid=23 write(nr=1, a0=0x1) -> 41
+[user B] tick
+[syscall] pid=22 write(nr=1, a0=0x1) -> 14
+[kernel] loaded ELF 'elf-hello' as pid 24 (parent 23): 16880 bytes, PML4 0xcd4000
+[user A] tick
+[syscall] pid=21 write(nr=1, a0=0x1) -> 14
+[syscall] pid=24 getpid(nr=39, a0=0x0) -> 24
+[syscall] pid=23 ax_spawn_module(nr=520, a0=0x80000034cf) -> 24
+[init] spawn elf-hello rights 0x80 -> pid 24
+[syscall] pid=23 write(nr=1, a0=0x1) -> 45
+[user B] tick
+[syscall] pid=22 write(nr=1, a0=0x1) -> 14
+[kernel] pid=24 killed: page fault in ring 3 at rip=0x0 (0x0)
+[kernel] pid 24 (parent 23) killed by signal 11
+[kernel] loaded ELF 'elf-fast' as pid 25 (parent 23): 16800 bytes, PML4 0xd84000
+[user A] tick
+[syscall] pid=21 write(nr=1, a0=0x1) -> 14
+[syscall] pid=23 ax_spawn_module(nr=520, a0=0x80000034e0) -> 25
+[kernel] pid=23 killed: page fault in ring 3 at rip=0x8000000787 (0xffffffffffffffd9)
+[kernel] pid 23 (parent 0) killed by signal 11
+[kernel] pid=25 killed: page fault in ring 3 at rip=0x8000000000 (0xd2)
+[kernel] pid 25 (parent 0) killed by signal 11
+[user B] tick
+[syscall] pid=22 write(nr=1, a0=0x1) -> 14
+[user A] tick
+[syscall] pid=21 write(nr=1, a0=0x1) -> 14
+[user A] tick
+[syscall] pid=21 write(nr=1, a0=0x1) -> 14
+[user B] tick
+[syscall] pid=22 write(nr=1, a0=0x1) -> 14
+[user A] tick
+[syscall] pid=21 write(nr=1, a0=0x1) -> 14
+[syscall] pid=21 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 21 (parent 0) exited with code 0
+[user B] tick
+[syscall] pid=22 write(nr=1, a0=0x1) -> 14
+[syscall] pid=22 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 22 (parent 0) exited with code 0
+[kernel] release pid 19: aspace 6 + kstack 16 frames
+[kernel] release pid 20: aspace 6 + kstack 16 frames
+[kernel] release pid 21: aspace 6 + kstack 16 frames
+[kernel] release pid 22: aspace 6 + kstack 16 frames
+[kernel] release pid 23: aspace 14 + kstack 16 frames
+[kernel] release pid 24: aspace 14 + kstack 16 frames
+[kernel] release pid 25: aspace 13 + kstack 16 frames
+[ledger] persisted 40 new records to disk
+[kernel] ledger: 3242 records, head 254e6af4b3924a8a...
+[kernel] round 3: kernel started 5, kernel reaped 7 (177 frames); 1 process records left; frames in use 286 -> 286
+[kernel] reclamation check: PASS (frames in use after each round: 286)
+[latency] after the self-tests:
+[latency] interrupts-off regions (outermost only), worst first:
+[latency]   region                  count     avg us     max us   total ms
+[latency]   kernel serial              63       1329      42656         83
+[latency]   ata command              1695       1140      40593       1932
+[latency]   sys write                  71       1134      11763         80
+[latency]   sys wait4                   8       3359       9540         26
+[latency]   timer tick               2049        226       4117        463
+[latency]   allocator                 444        115       4023         51
+[latency]   sys ax_get_evidence       602        918       3806        552
+[latency]   sys ax_spawn_module        26        464       2409         12
+[latency]   sys nanosleep               7        989       1865          6
+[latency]   sys exit                   14       1161       1745         16
+[latency]   sys ax_fs_write             1       1056       1056          1
+[latency]   sys ax_fs_read              1        778        778          0
+[latency]   sys getpid                  9        641        748          5
+[latency]   sys ax_fs_delete            1        715        715          0
+[latency]   sys ax_fs_list              1        616        616          0
+[latency]   ledger append              47         55        371          2
+[latency] fs lock (sleeping): 0 acquisitions, 0 had to wait; preemptible syscalls count one row per interrupts-off segment
+[latency] tick gaps (2048 ticks): <15ms 1796, 15-25 44, 25-50 31, 50-100 158, 100-500 19, >=500 0; max 298 ms; ~1336 ticks lost
+[kernel] loaded ELF 'elf-shell' as pid 26 (parent 0): 49736 bytes, PML4 0xd68000
+
+Axiom-X shell (pid 26). Type 'help'.
+axiom> 

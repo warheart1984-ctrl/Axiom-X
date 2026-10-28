@@ -157,7 +157,32 @@ impl ElfLoader {
 
     /// Load all PT_LOAD segments from `elf_data` into the target address space.
     /// Returns the loaded segments.
+    ///
+    /// Runs under the kernel's own page tables: temporary mappings used for
+    /// the data copy live in KERNEL_PML4 (matching `unmap_kernel_page`), so
+    /// they never leak into the caller's address space when this is invoked
+    /// from a syscall running under another process's CR3.
     pub fn load_segments(
+        &mut self,
+        elf_data: &[u8],
+        owner_pid: u32,
+    ) -> Result<Vec<LoadedSegment>, &'static str> {
+        use x86_64::registers::control::Cr3;
+        use x86_64::structures::paging::PhysFrame;
+        use x86_64::PhysAddr;
+        let saved = Cr3::read();
+        unsafe {
+            Cr3::write(
+                PhysFrame::containing_address(PhysAddr::new(crate::kernel_pml4_root())),
+                saved.1,
+            );
+        }
+        let r = self.load_segments_inner(elf_data, owner_pid);
+        unsafe { Cr3::write(saved.0, saved.1) };
+        r
+    }
+
+    fn load_segments_inner(
         &mut self,
         elf_data: &[u8],
         owner_pid: u32,
@@ -167,10 +192,9 @@ impl ElfLoader {
         let phentsize = header.e_phentsize as usize;
         let phnum = header.e_phnum as usize;
 
-        // Get the kernel's current PML4 so we can temporarily map user pages
-        // into kernel address space for the data copy.
-        let kernel_cr3 = x86_64::registers::control::Cr3::read();
-        let kernel_root = kernel_cr3.0.start_address().as_u64();
+        // Temporary copy mappings live in the kernel's own PML4 (the CR3 the
+        // wrapper installed), paired with `unmap_kernel_page` below.
+        let kernel_root = crate::kernel_pml4_root();
 
         let mut segments = Vec::new();
         let mut page_maps: Vec<PageMap> = Vec::new();
@@ -344,14 +368,9 @@ impl ElfLoader {
 /// Allocate one physical frame for `owner_pid` using the boot frame allocator.
 /// Allocate one physical frame for `owner_pid` using the boot frame allocator.
 fn alloc_one_frame(owner_pid: u32) -> Result<u64, &'static str> {
-    // Simple bump allocator starting just past the kernel image.
-    // Frames are never freed here; the whole address space is torn down on exit.
-    static mut NEXT_FRAME: u64 = 0x100000;
-    let addr = unsafe {
-        NEXT_FRAME += 0x1000;
-        NEXT_FRAME
-    };
-    Ok(addr - 0x1000)
+    let _ = owner_pid;
+    let frame = unsafe { crate::alloc_boot_frame() }.ok_or("out of memory for ELF page")?;
+    Ok(frame.start_address().as_u64())
 }
 
 /// Find the physical frame backing a virtual address in the target address space.

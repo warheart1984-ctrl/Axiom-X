@@ -292,6 +292,11 @@ unsafe fn alloc_kernel_stack_inner() -> VirtAddr {
 /// Unmap one 4 KiB kernel page from the shared kernel tables and return its
 /// frame. Every address space shares these tables; other CR3s flush the
 /// stale TLB entry on their next load (single CPU).
+/// Physical address of the kernel's own PML4 root.
+pub fn kernel_pml4_root() -> u64 {
+    unsafe { KERNEL_PML4.expect("PML4 not initialized").start_address().as_u64() }
+}
+
 pub(crate) unsafe fn unmap_kernel_page(virt: u64) -> Option<PhysFrame<Size4KiB>> {
     let mut table = KERNEL_PML4?.start_address().as_u64() as *mut PageTable;
     for shift in [39u64, 30, 21] {
@@ -343,7 +348,6 @@ pub fn free_address_space(root: PhysFrame<Size4KiB>) -> u64 {
             if level > 1 && !entry.flags().contains(PageTableFlags::HUGE_PAGE) {
                 freed += free_level(frame.start_address().as_u64(), level - 1);
             }
-            serial_print!("[free_level] L{} table {:#x} entry->frame {:#x}\n", level, table, frame.start_address().as_u64());
             free_frame(frame);
             freed += 1;
         }
@@ -394,6 +398,7 @@ static mut BOOT_FRAME_ALLOCATOR: Option<BootFrameAllocator> = None;
 /// free list of returned frames (each free frame stores the next link in its
 /// first 8 bytes, reached through the identity map).
 struct BootFrameAllocator {
+    start: u64,
     current: u64,
     end: u64,
     free_head: u64,
@@ -407,10 +412,28 @@ const IDENTITY_MAPPED_END: u64 = 1 << 30;
 
 impl BootFrameAllocator {
     fn new(start: u64, end: u64) -> Self {
-        Self { current: start, end: end.min(IDENTITY_MAPPED_END), free_head: 0, allocated: 0, freed: 0 }
+        Self { start, current: start, end: end.min(IDENTITY_MAPPED_END), free_head: 0, allocated: 0, freed: 0 }
+    }
+
+    /// Walk the free chain; false if it is longer than `freed` (cycle or
+    /// a node written twice) or a node is unaligned/out of range. Used
+    /// inside alloc() so the first allocation after a corrupting write
+    /// panics instead of handing out a bogus frame.
+    fn chain_ok(&self) -> bool {
+        let mut head = self.free_head;
+        let mut nodes = 0u64;
+        while head != 0 {
+            nodes += 1;
+            if nodes > self.freed || head & 0xFFF != 0 || head >= self.end || head < self.start {
+                return false;
+            }
+            head = unsafe { ptr::read(head as *const u64) };
+        }
+        true
     }
 
     fn alloc(&mut self) -> Option<PhysFrame<Size4KiB>> {
+        assert!(self.chain_ok(), "free list corrupt before alloc");
         let addr = if self.free_head != 0 {
             let addr = self.free_head;
             self.free_head = unsafe { ptr::read(addr as *const u64) };
@@ -433,6 +456,14 @@ impl BootFrameAllocator {
         // Debug: catch a double-free at the moment it happens — if `addr`
         // is already linked, the list walk finds it. The cap bounds the
         // walk if the chain is already corrupt.
+        // A frame outside the allocator's region was never handed out —
+        // freeing it is always a bug (e.g. a frame shared from a module or
+        // a stale pointer misread as an allocation).
+        assert!(
+            addr >= self.start && addr < self.end,
+            "frame {:#x} freed but outside allocator range [{:#x}, {:#x})",
+            addr, self.start, self.end
+        );
         let mut head = self.free_head;
         let mut walked = 0u64;
         while head != 0 && walked <= self.freed {
@@ -526,7 +557,7 @@ unsafe fn init_boot_allocator(boot_info: &BootInfo) {
     panic!("No available memory for boot allocator");
 }
 
-pub(crate) unsafe fn alloc_boot_frame() -> Option<PhysFrame<Size4KiB>> {
+pub unsafe fn alloc_boot_frame() -> Option<PhysFrame<Size4KiB>> {
     // Interrupts off: init allocates while user threads run and fault/exit
     // paths may free.
     axiom_x_arch::latency::irq_off(axiom_x_arch::latency::Site::Allocator, || BOOT_FRAME_ALLOCATOR.as_mut()?.alloc())
