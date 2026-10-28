@@ -260,6 +260,11 @@ impl ElfLoader {
                     ptr::copy_nonoverlapping(src, dst, copy_len as usize);
                 }
 
+                // Drop the temporary kernel mapping: the frame belongs to
+                // the user address space, not the kernel — leaving the PTE
+                // would alias a frame the user teardown later frees.
+                let _ = unsafe { crate::unmap_kernel_page(page_virt) };
+
                 copied += copy_len;
             }
 
@@ -302,6 +307,8 @@ impl ElfLoader {
                 unsafe {
                     ptr::write_bytes(virt as *mut u8, 0, bytes as usize);
                 }
+
+                let _ = unsafe { crate::unmap_kernel_page(virt) };
 
                 virt += PAGE_SIZE;
             }

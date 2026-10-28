@@ -351,7 +351,13 @@ pub fn mount_fs() {
 /// Called from `wait4` (parent's context) or the kernel reaper, never on
 /// the dying thread itself, which is standing on both.
 fn release_process(p: &Process) -> u64 {
-    crate::free_address_space(p.page_table_root) + crate::free_kernel_stack(p.kernel_stack_top)
+    let aspace = crate::free_address_space(p.page_table_root);
+    let kstack = crate::free_kernel_stack(p.kernel_stack_top);
+    serial_print!(
+        "[kernel] release pid {}: aspace {} + kstack {} frames\n",
+        p.pid, aspace, kstack
+    );
+    aspace + kstack
 }
 
 /// Attach the persistent ledger (before this boot appends anything) and
@@ -507,7 +513,19 @@ fn reap() -> (u32, u64) {
     let table = axiom_x_arch::interrupts::process_table();
     let dead: heapless::Vec<u32, 64> = table.with_locked(|ps| {
         ps.iter()
-            .filter(|p| p.state == ProcessState::Terminated && p.parent_pid.is_none())
+            .filter(|p| {
+                p.state == ProcessState::Terminated
+                    && match p.parent_pid {
+                        None => true,
+                        // Orphan: the parent is gone or Terminated, so no one
+                        // will ever wait4 this record — the kernel reaps it.
+                        Some(par) => ps
+                            .iter()
+                            .find(|parent| parent.pid == par)
+                            .map(|parent| parent.state == ProcessState::Terminated)
+                            .unwrap_or(true),
+                    }
+            })
             .map(|p| p.pid)
             .collect()
     });
@@ -527,8 +545,8 @@ fn reap() -> (u32, u64) {
 /// "frames in use" after both rounds means process teardown, by `wait4`
 /// in user space or by the kernel reaper, returns everything allocated.
 pub fn run_rounds() {
-    let mut after = [0u64; 2];
-    for round in 0..2 {
+    let mut after = [0u64; 3];
+    for round in 0..3 {
         let before = frames_in_use();
         serial_print!("[kernel] === round {}: frames in use {} ===\n", round + 1, before);
         let started = spawn_round();
@@ -554,10 +572,13 @@ pub fn run_rounds() {
             round + 1, started, n, freed, left, before, after[round]
         );
     }
-    if after[0] == after[1] {
+    if after[0] == after[1] && after[1] == after[2] {
         serial_print!("[kernel] reclamation check: PASS (frames in use after each round: {})\n", after[1]);
     } else {
-        serial_print!("[kernel] reclamation check: FAIL ({} vs {} frames)\n", after[0], after[1]);
+        serial_print!(
+            "[kernel] reclamation check: FAIL ({} vs {} vs {} frames)\n",
+            after[0], after[1], after[2]
+        );
     }
 }
 

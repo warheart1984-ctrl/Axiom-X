@@ -292,7 +292,7 @@ unsafe fn alloc_kernel_stack_inner() -> VirtAddr {
 /// Unmap one 4 KiB kernel page from the shared kernel tables and return its
 /// frame. Every address space shares these tables; other CR3s flush the
 /// stale TLB entry on their next load (single CPU).
-unsafe fn unmap_kernel_page(virt: u64) -> Option<PhysFrame<Size4KiB>> {
+pub(crate) unsafe fn unmap_kernel_page(virt: u64) -> Option<PhysFrame<Size4KiB>> {
     let mut table = KERNEL_PML4?.start_address().as_u64() as *mut PageTable;
     for shift in [39u64, 30, 21] {
         let entry = &(&*table)[((virt >> shift) & 0x1FF) as usize];
