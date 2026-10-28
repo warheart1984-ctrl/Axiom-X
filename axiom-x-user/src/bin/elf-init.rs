@@ -114,7 +114,10 @@ fn main() -> i32 {
         "[init] all children reaped: {}/{} (exit 0: {}, signaled: {}); expected spawn failures: {}/3; audit ok: {}; wait(-1) now -> {:?}",
         reaped, n, clean, killed, failures_as_expected, audit_ok, none_left.map(|(p, _)| p)
     );
-    let ok = reaped == n && clean == 4 && killed == 1 && failures_as_expected == 3
+    // clean >= 4: the core four (hello/heap/fast/slow-era programs) must
+    // still exit 0; egress-dependent programs (elf-egress, elf-workload)
+    // exit 1 when no host proxy answers, so the clean count varies.
+    let ok = reaped == n && clean >= 4 && killed == 1 && failures_as_expected == 3
         && audit_ok && none_left == Err(-errno::ECHILD);
     println!("[init] process-lifecycle check: {}", if ok { "PASS" } else { "FAIL" });
     if ok { 0 } else { 1 }

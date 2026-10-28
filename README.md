@@ -32,6 +32,11 @@ Every row is backed by an evidence file in `evidence/`.
 | Locking audit; preemptible FS/spawn syscalls, sleeping FS lock | partial | `LOCKING-AUDIT-`, `PREEMPT-FS-EVIDENCE-2026-10-18.md` (temp-map race and COM2 interleave found and fixed since) |
 | SMP, directories, partial file I/O, bare metal | roadmap | none |
 
+Known gaps (external review, 2026-10-28): ledger *rollback* — restoring an
+older signed disk verifies as valid (needs an external head anchor); the
+Ed25519 seed ships inside the ISO as a GRUB module (should live on the
+ledger disk); arch/boot/user crates compile but carry no unit tests.
+
 ## Build and run
 
 ```bash

@@ -294,9 +294,13 @@ fn egress_allow(pid: u32, now: u64) -> bool {
         }
     };
     let (_, last, tokens) = &mut v[idx];
-    let refill = (((now - *last) / 1_000_000_000) * EGRESS_RATE_PER_SEC as u64) as u32;
-    *tokens = (*tokens + refill).min(EGRESS_BURST);
-    *last = now;
+    // Advance `last` only by the whole seconds actually spent — a caller
+    // retrying below the 1 s quantum must still accumulate them.
+    let secs = (now - *last) / 1_000_000_000;
+    if secs > 0 {
+        *tokens = (*tokens + secs as u32 * EGRESS_RATE_PER_SEC).min(EGRESS_BURST);
+        *last += secs * 1_000_000_000;
+    }
     if *tokens == 0 {
         return false;
     }
@@ -439,7 +443,9 @@ fn spawn_elf_loader(name: &str, bytes: &[u8], parent: Option<u32>, rights: Right
         .map_err(|why| {
             serial_print!("[kernel] ELF '{}' failed to load: {}\n", name, why);
             crate::free_address_space(PhysFrame::containing_address(PhysAddr::new(root)));
-            -ENOMEM
+            // ELF-format/permission problems are -ENOEXEC; only genuine
+            // frame exhaustion is -ENOMEM.
+            if why.contains("frames") { -ENOMEM } else { -ENOEXEC }
         })?;
 
     // Map stack pages

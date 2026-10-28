@@ -379,6 +379,12 @@ fn sys_spawn_module(parent: u32, name_ptr: u64, len: u64, rights_bits: u64) -> i
         crate::governance::record_create(parent, 0, requested, false, -EPERM);
         return -EPERM;
     }
+    if requested.bits() != 0 && !held.contains(Rights::DELEGATE) {
+        // Granting any rights to the child is delegation — SPAWN alone
+        // only allows rights-empty children.
+        crate::governance::record_create(parent, 0, requested, false, -EPERM);
+        return -EPERM;
+    }
     if !held.contains(requested) {
         // Escalation: asking for rights the parent does not hold.
         crate::governance::record_create(parent, 0, requested, false, -EPERM);

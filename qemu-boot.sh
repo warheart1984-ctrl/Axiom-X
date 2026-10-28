@@ -121,6 +121,11 @@ if [ "${LIVE:-0}" = 1 ]; then
     exit 0
 fi
 
+# Preserve the previous boot's evidence instead of clobbering it.
+if [ -f evidence/serial-mb2.log ]; then
+    mv evidence/serial-mb2.log "evidence/serial-mb2-$(date +%Y%m%d-%H%M%S).log"
+fi
+
 timeout "$SECS" qemu-system-x86_64 -cdrom "$ISO" -boot d \
     -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
     -drive "file=$FS_DISK,format=raw,if=ide,index=1,media=disk,cache=writethrough" \

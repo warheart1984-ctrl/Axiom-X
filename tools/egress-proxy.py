@@ -18,6 +18,12 @@ import urllib.request
 
 LISTEN = ("127.0.0.1", 4445)
 UPSTREAM = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8080"
+# A guest declaring more than this in one frame is buggy or hostile —
+# the protocol has no reason to go bigger.
+MAX_FRAME = 64 * 1024
+# Upstream bound: keep it under the guest's 10 s channel deadline so a
+# slow upstream reads as a proxy error, not a hung petition.
+UPSTREAM_TIMEOUT = 8
 
 
 def read_exact(conn: socket.socket, n: int) -> bytes:
@@ -42,18 +48,21 @@ def forward(payload: bytes) -> bytes:
         req = urllib.request.Request(
             UPSTREAM, data=payload, headers={"Content-Type": "application/octet-stream"}
         )
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as r:
             return r.read()
     except Exception as e:
         return f"HTTP/1.1 503 Proxy Error\r\n\r\n{e}".encode()
 
 
 def serve(conn: socket.socket):
+    conn.settimeout(30)
     while True:
         magic = read_exact(conn, 4)
         if magic != b"AXEG":
             raise ValueError(f"bad magic {magic!r}")
         (n,) = struct.unpack("<Q", read_exact(conn, 8))
+        if n == 0 or n > MAX_FRAME:
+            raise ValueError(f"bad frame length {n}")
         payload = read_exact(conn, n)
         resp = forward(payload)
         conn.sendall(b"RESP" + struct.pack("<Q", len(resp)) + resp)

@@ -151,12 +151,15 @@ pub fn schedule(frame_rsp: u64) -> u64 {
     // not from a ring.
     let mut next: Option<usize> = None;
     let mut best_j = f64::MAX;
-    for (i, p) in procs.iter().enumerate() {
+    for (i, p) in procs.iter_mut().enumerate() {
         if p.state != ProcessState::Runnable || p.saved_rsp == 0 {
             continue;
         }
         let w = &p.profile.weights();
         let wait_ms = now.saturating_sub(p.runnable_since) as f64 / 1e6;
+        // Single core: thermal cost is the process's own load share —
+        // a hog is hot. Feeds the γ term real data instead of zero.
+        p.metrics.thermal_cost = p.metrics.cpu_load;
         let j = -w.alpha * wait_ms + w.beta * p.metrics.cpu_load + w.gamma * p.metrics.thermal_cost;
         if j < best_j {
             best_j = j;
