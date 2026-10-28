@@ -167,19 +167,7 @@ impl ElfLoader {
         elf_data: &[u8],
         owner_pid: u32,
     ) -> Result<Vec<LoadedSegment>, &'static str> {
-        use x86_64::registers::control::Cr3;
-        use x86_64::structures::paging::PhysFrame;
-        use x86_64::PhysAddr;
-        let saved = Cr3::read();
-        unsafe {
-            Cr3::write(
-                PhysFrame::containing_address(PhysAddr::new(crate::kernel_pml4_root())),
-                saved.1,
-            );
-        }
-        let r = self.load_segments_inner(elf_data, owner_pid);
-        unsafe { Cr3::write(saved.0, saved.1) };
-        r
+        self.load_segments_inner(elf_data, owner_pid)
     }
 
     fn load_segments_inner(
@@ -191,10 +179,6 @@ impl ElfLoader {
         let ph_start = header.e_phoff as usize;
         let phentsize = header.e_phentsize as usize;
         let phnum = header.e_phnum as usize;
-
-        // Temporary copy mappings live in the kernel's own PML4 (the CR3 the
-        // wrapper installed), paired with `unmap_kernel_page` below.
-        let kernel_root = crate::kernel_pml4_root();
 
         let mut segments = Vec::new();
         let mut page_maps: Vec<PageMap> = Vec::new();
@@ -268,29 +252,14 @@ impl ElfLoader {
                     .map(|pm| pm.phys)
                     .ok_or("User page not mapped")?;
 
-                // Temporarily map this user page into kernel address space.
-                map_page_in(
-                    kernel_root,
-                    page_virt,
-                    phys,
-                    x86_64::structures::paging::PageTableFlags::PRESENT
-                        | x86_64::structures::paging::PageTableFlags::WRITABLE,
-                );
-                // A not-present structure entry may be cached from an
-                // earlier walk; new PTEs need the flush before use.
-                x86_64::instructions::tlb::flush(x86_64::VirtAddr::new(page_virt));
-
-                // Copy from kernel-space ELF data to the now-accessible user page.
+                // The frame is identity-mapped for the kernel — write to
+                // phys directly. No temp map, no CR3 switch, no shared
+                // scratch VA, no race with a concurrent load's unmap.
                 let src = unsafe { elf_data.as_ptr().add(ph.p_offset as usize + copied as usize) };
-                let dst = page_virt as *mut u8;
+                let dst = (phys + page_offset) as *mut u8;
                 unsafe {
                     ptr::copy_nonoverlapping(src, dst, copy_len as usize);
                 }
-
-                // Drop the temporary kernel mapping: the frame belongs to
-                // the user address space, not the kernel — leaving the PTE
-                // would alias a frame the user teardown later frees.
-                let _ = unsafe { crate::unmap_kernel_page(page_virt) };
 
                 copied += copy_len;
             }
@@ -325,21 +294,10 @@ impl ElfLoader {
                     .map(|pm| pm.phys)
                     .ok_or("BSS page not mapped")?;
 
-                map_page_in(
-                    kernel_root,
-                    page,
-                    phys,
-                    x86_64::structures::paging::PageTableFlags::PRESENT
-                        | x86_64::structures::paging::PageTableFlags::WRITABLE,
-                );
-                x86_64::instructions::tlb::flush(x86_64::VirtAddr::new(page));
-
                 let bytes = ((page + PAGE_SIZE) - virt).min(mem_end - virt);
                 unsafe {
-                    ptr::write_bytes(virt as *mut u8, 0, bytes as usize);
+                    ptr::write_bytes((phys + (virt - page)) as *mut u8, 0, bytes as usize);
                 }
-
-                let _ = unsafe { crate::unmap_kernel_page(page) };
 
                 virt += bytes;
             }

@@ -15,3 +15,7 @@ test = false
 [[bin]]
 name = "elf-agent"
 path = "src/bin/elf-agent.rs"
+
+[[bin]]
+name = "elf-workload"
+path = "src/bin/elf-workload.rs"

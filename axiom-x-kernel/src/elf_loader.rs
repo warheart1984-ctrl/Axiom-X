@@ -244,17 +244,10 @@ impl ElfLoader {
                     .map(|pm| pm.phys)
                     .ok_or("User page not mapped")?;
 
-                // Temporarily map this user page into kernel address space.
-                map_page_in(
-                    kernel_root,
-                    page_virt,
-                    phys,
-                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
-                );
-
-                // Copy from kernel-space ELF data to the now-accessible user page.
+                // The frame is identity-mapped for the kernel — write to
+                // phys directly (no temp map to race a concurrent load).
                 let src = unsafe { elf_data.as_ptr().add(ph.p_offset as usize + copied as usize) };
-                let dst = page_virt as *mut u8;
+                let dst = (phys + page_offset) as *mut u8;
                 unsafe {
                     ptr::copy_nonoverlapping(src, dst, copy_len as usize);
                 }
@@ -292,16 +285,9 @@ impl ElfLoader {
                     .map(|pm| pm.phys)
                     .ok_or("BSS page not mapped")?;
 
-                map_page_in(
-                    kernel_root,
-                    page,
-                    phys,
-                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
-                );
-
                 let bytes = ((page + PAGE_SIZE) - virt).min(mem_end - virt);
                 unsafe {
-                    ptr::write_bytes(virt as *mut u8, 0, bytes as usize);
+                    ptr::write_bytes((phys + (virt - page)) as *mut u8, 0, bytes as usize);
                 }
 
                 virt += bytes;

@@ -307,6 +307,10 @@ fn egress_allow(pid: u32, now: u64) -> bool {
 /// `AX_EGRESS` backend: frame the request to COM2, wait for the framed
 /// response, copy it into the caller's buffer. Runs under the caller's
 /// page tables, so user VAs copy directly.
+/// One petition at a time: concurrent callers' COM2 writes would
+/// interleave mid-frame and corrupt the channel protocol.
+static EGRESS_LOCK: spin::Mutex<()> = spin::Mutex::new(());
+
 fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u64) -> i64 {
     use axiom_x_arch::syscall::{EAGAIN, EFAULT, EINVAL, EIO, user_range_accessible};
     if req_len == 0 || req_len > EGRESS_REQ_MAX as u64 || resp_max == 0 || resp_max > EGRESS_RESP_MAX as u64 {
@@ -315,6 +319,7 @@ fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u6
     if !egress_allow(pid, axiom_x_arch::clock::monotonic_ns()) {
         return -EAGAIN;
     }
+    let _channel = EGRESS_LOCK.lock();
     if !user_range_accessible(req_ptr, req_len, false) || !user_range_accessible(resp_ptr, resp_max, true) {
         return -EFAULT;
     }
@@ -344,7 +349,7 @@ fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u6
 /// Rights the kernel grants user-space init. Everything any process can
 /// ever hold descends from this set: init can only pass on subsets.
 const INIT_RIGHTS: Rights = Rights::new(
-    Rights::SEND.bits() | Rights::SPAWN.bits() | Rights::DELEGATE.bits() | Rights::EVIDENCE.bits() | Rights::ALLOC.bits() | Rights::NET.bits(),
+    Rights::SEND.bits() | Rights::SPAWN.bits() | Rights::DELEGATE.bits() | Rights::EVIDENCE.bits() | Rights::ALLOC.bits() | Rights::NET.bits() | Rights::READ.bits() | Rights::WRITE.bits(),
 );
 
 /// Ledger the grant for a process the kernel itself created (the rights
