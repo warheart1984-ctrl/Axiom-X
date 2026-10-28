@@ -53,6 +53,7 @@ mod elf;
 
 // Movie subsystem
 pub mod movie;
+pub mod elf_loader;
 
 // ============================================================================
 // Boot Information Structures
@@ -381,8 +382,8 @@ pub fn new_address_space() -> PhysFrame<Size4KiB> {
 }
 
 /// Map one 4 KiB page into the address space rooted at `root`.
-pub fn map_page_in(root: PhysFrame<Size4KiB>, virt: u64, phys: u64, flags: PageTableFlags) {
-    unsafe { map_4kib_page(root.start_address().as_u64() as *mut PageTable, virt, phys, flags) }
+pub fn map_page_in(root: u64, virt: u64, phys: u64, flags: PageTableFlags) {
+    unsafe { map_4kib_page(root as *mut PageTable, virt, phys, flags) }
 }
 
 /// Boot-time frame allocator (bump allocator from available memory)
@@ -494,7 +495,7 @@ unsafe fn init_boot_allocator(boot_info: &BootInfo) {
     panic!("No available memory for boot allocator");
 }
 
-unsafe fn alloc_boot_frame() -> Option<PhysFrame<Size4KiB>> {
+pub(crate) unsafe fn alloc_boot_frame() -> Option<PhysFrame<Size4KiB>> {
     // Interrupts off: init allocates while user threads run and fault/exit
     // paths may free.
     axiom_x_arch::latency::irq_off(axiom_x_arch::latency::Site::Allocator, || BOOT_FRAME_ALLOCATOR.as_mut()?.alloc())

@@ -400,13 +400,18 @@ pub fn context_switch(table: &ProcessTable, next_pid: u32) -> ! {
     let next = table.get_mut(next_pid).map(|mut guard| {
         let proc = guard.get_mut();
         proc.state = ProcessState::Running;
-        (proc.ctx, proc.page_table_root)
+        (proc.ctx, proc.page_table_root, proc.kernel_stack_top)
     });
-    if let Some((ctx, root)) = next {
+    if let Some((ctx, root, stack_top)) = next {
         CURRENT_PID.store(next_pid, Ordering::SeqCst);
 
         // Switch address space (CR3)
         unsafe { switch_address_space(root) };
+
+        // Point TSS.RSP0 at the incoming task's kernel stack: ring-3 ->
+        // ring-0 entries (syscall, IRQ, fault) need it to find the right
+        // stack. Equivalent of Linux's update_task_stack in __switch_to.
+        crate::gdt::set_kernel_stack(stack_top);
 
         // Restore context and jump to user/kernel code
         unsafe { restore_context(&ctx) };
@@ -443,19 +448,20 @@ pub unsafe extern "C" fn save_context(ctx: *mut CpuContext) {
         "mov [rdi + 0x18], r12",
         "mov [rdi + 0x20], rbx",
         "mov [rdi + 0x28], rbp",
-        // Return address (pushed by the call) -> rip slot
-        "mov rax, [rsp]",
-        "mov [rdi + 0x30], rax",
-        // Caller-saved registers (values at the scheduling point)
+        // Caller-saved registers (values at the scheduling point). rax must
+        // be stored before it is used as scratch for the return address.
+        "mov [rdi + 0x58], rax",
         "mov [rdi + 0x38], rdi",
         "mov [rdi + 0x40], rsi",
         "mov [rdi + 0x48], rdx",
         "mov [rdi + 0x50], rcx",
-        "mov [rdi + 0x58], rax",
         "mov [rdi + 0x60], r8",
         "mov [rdi + 0x68], r9",
         "mov [rdi + 0x70], r10",
         "mov [rdi + 0x78], r11",
+        // Return address (pushed by the call) -> rip slot
+        "mov rax, [rsp]",
+        "mov [rdi + 0x30], rax",
         // Stack pointer (pointing past the return address)
         "lea rax, [rsp + 8]",
         "mov [rdi + 0x80], rax",
@@ -470,13 +476,15 @@ pub unsafe extern "C" fn save_context(ctx: *mut CpuContext) {
         "mov [rdi + 0x96], es",
         "mov [rdi + 0x98], fs",
         "mov [rdi + 0x9a], gs",
-        // FS/GS base (IA32_FS_BASE = 0xC0000100, IA32_GS_BASE = 0xC0000101)
+        // FS base (IA32_FS_BASE = 0xC0000100), then the USER GS base: in
+        // kernel mode IA32_GS_BASE holds the kernel base, so the user TLS
+        // base lives in the inactive slot IA32_KERNEL_GS_BASE = 0xC0000102.
         "mov ecx, 0xC0000100",
         "rdmsr",
         "shl rdx, 32",
         "or rax, rdx",
         "mov [rdi + 0x9c], rax",
-        "mov ecx, 0xC0000101",
+        "mov ecx, 0xC0000102",
         "rdmsr",
         "shl rdx, 32",
         "or rax, rdx",
@@ -501,8 +509,9 @@ pub unsafe extern "C" fn restore_context(ctx: *const CpuContext) -> ! {
         "mov rdx, rax",
         "shr rdx, 32",
         "wrmsr",
-        // GS base
-        "mov ecx, 0xC0000101",
+        // GS base: write the inactive slot (IA32_KERNEL_GS_BASE) so the next
+        // swapgs on kernel exit hands this base to ring 3.
+        "mov ecx, 0xC0000102",
         "mov rax, [rdi + 0xa4]",
         "mov rdx, rax",
         "shr rdx, 32",

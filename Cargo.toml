@@ -14,8 +14,9 @@ members = [
     "axiom-x-ledger",
     "axiom-x-ledger-tool",
     "axiom-x-fs",
+    "axiom-x-kernel",
 ]
-exclude = ["axiom-x-init", "axiom-x-kernel", "axiom-x-principal", "axiom-x-capability", "axiom-x-capability-lineage"]
+exclude = ["axiom-x-init", "axiom-x-capability-lineage"]
 
 # Host-testable crates only. The freestanding kernel crates (axiom-x-arch-x86_64,
 # axiom-x-arch, axiom-x-boot, axiom-x-kernel, axiom-x-test) use target-specific

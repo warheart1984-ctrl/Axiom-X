@@ -7,70 +7,83 @@ PUBLIC restore_context
 PUBLIC syscall_entry
 
 ; MSR constants
-IA32_FS_BASE  EQU 0C0000100h
-IA32_GS_BASE  EQU 0C0000101h
+IA32_FS_BASE        EQU 0C0000100h
+IA32_KERNEL_GS_BASE EQU 0C0000102h   ; inactive (user) GS base while in kernel
 
 ; ============================================================
 ; save_context(ctx: *mut CpuContext)
 ; Saves current CPU context to the provided CpuContext struct
 ; ============================================================
+; Ordering follows the Linux 7.0.0-39 reference semantics (see
+; evidence/RE-LINUX-MECHANISMS-EVIDENCE-2026-10-28.md): caller-saved regs are
+; stored BEFORE rax becomes scratch, and the user GS base is the INACTIVE
+; slot (KERNEL_GS_BASE), never the kernel's active GS.
 save_context PROC
     ; RCX = ctx pointer (Microsoft x64 calling convention)
-    
-    ; Save callee-saved registers
-    MOV [RCX + 00h], R15
-    MOV [RCX + 08h], R14
-    MOV [RCX + 10h], R13
-    MOV [RCX + 18h], R12
-    MOV [RCX + 20h], RBX
-    MOV [RCX + 28h], RBP
 
-    ; Save RIP (return address)
-    MOV [RCX + 30h], RSP       ; We'll fix RIP below
-    MOV RAX, [RSP]
-    MOV [RCX + 30h], RAX
-
-    ; Save caller-saved registers
+    ; Caller-saved FIRST: rax must be stored before it becomes scratch for
+    ; the return address (storing RIP into ctx.rax loses the real rax).
+    MOV [RCX + 58h], RAX
     MOV [RCX + 38h], RDI
     MOV [RCX + 40h], RSI
     MOV [RCX + 48h], RDX
-    MOV [RCX + 50h], RCX
-    MOV [RCX + 58h], RAX
+    MOV [RCX + 50h], RCX        ; ctx pointer as the saved rcx value
     MOV [RCX + 60h], R8
     MOV [RCX + 68h], R9
     MOV [RCX + 70h], R10
     MOV [RCX + 78h], R11
 
-    ; Save RSP (after pushing return address)
-    LEA RAX, [RSP + 8]
-    MOV [RCX + 80h], RAX
+    ; R10's slot is written; use it to preserve the ctx pointer across the
+    ; RDMSR blocks below (RDMSR consumes RCX).
+    MOV R10, RCX
 
-    ; Save RFLAGS
+    ; Callee-saved registers
+    MOV [R10 + 00h], R15
+    MOV [R10 + 08h], R14
+    MOV [R10 + 10h], R13
+    MOV [R10 + 18h], R12
+    MOV [R10 + 20h], RBX
+    MOV [R10 + 28h], RBP
+
+    ; RIP (return address on stack at [rsp])
+    MOV RAX, [RSP]
+    MOV [R10 + 30h], RAX
+
+    ; RSP (past the return address)
+    LEA RAX, [RSP + 8]
+    MOV [R10 + 80h], RAX
+
+    ; RFLAGS (saved only; iretq applies it on restore)
     PUSHFQ
     POP RAX
-    MOV [RCX + 88h], RAX
+    MOV [R10 + 88h], RAX
 
-    ; Save segment registers
-    MOV [RCX + 90h], CS
-    MOV [RCX + 92h], SS
-    MOV [RCX + 94h], DS
-    MOV [RCX + 96h], ES
-    MOV [RCX + 98h], FS
-    MOV [RCX + 9Ah], GS
+    ; Segment registers
+    MOV [R10 + 90h], CS
+    MOV [R10 + 92h], SS
+    MOV [R10 + 94h], DS
+    MOV [R10 + 96h], ES
+    MOV [R10 + 98h], FS
+    MOV [R10 + 9Ah], GS
 
-    ; Save FS/GS base (using RDMSR for IA32_FS_BASE/GS_BASE)
+    ; FS base: RDMSR returns EDX:EAX — join high/low into RAX.
     MOV RCX, IA32_FS_BASE
     RDMSR
-    MOV [RCX + 9Ch], RAX
-    MOV [RCX + 0A4h], RAX
-    MOV RCX, IA32_GS_BASE
-    RDMSR
-    MOV [RCX + 9Ch], RAX
-    MOV [RCX + 0A4h], RAX
+    SHL RDX, 32
+    OR RAX, RDX
+    MOV [R10 + 9Ch], RAX
 
-    ; Save CR3
+    ; User GS base: the inactive slot (KERNEL_GS_BASE). In kernel mode the
+    ; active GS_BASE is the kernel's; the user TLS base lives here.
+    MOV RCX, IA32_KERNEL_GS_BASE
+    RDMSR
+    SHL RDX, 32
+    OR RAX, RDX
+    MOV [R10 + 0A4h], RAX
+
+    ; CR3
     MOV RAX, CR3
-    MOV [RCX + 0ACh], RAX
+    MOV [R10 + 0ACh], RAX
 
     RET
 save_context ENDP
@@ -79,60 +92,72 @@ save_context ENDP
 ; restore_context(ctx: *const CpuContext) -> !
 ; Restores CPU context from the provided CpuContext struct and jumps to RIP
 ; ============================================================
+; RFLAGS is applied exactly once — by iretq — so no interrupt observes a
+; half-restored context. R10 holds the ctx pointer through the WRMSR blocks
+; and the register reload (RCX is consumed by both).
 restore_context PROC
-    ; RCX = ctx pointer
-    
-    ; Restore CR3 first (address space switch)
-    MOV RAX, [RCX + 0ACh]
+    ; RCX = ctx pointer — preserve it in R10 immediately.
+    MOV R10, RCX
+
+    ; CR3 first: switch address space (ctx is kernel-mapped everywhere)
+    MOV RAX, [R10 + 0ACh]
     MOV CR3, RAX
 
-    ; Restore FS/GS base (using WRMSR)
+    ; FS base: split the 64-bit value into EDX:EAX for WRMSR.
     MOV RCX, IA32_FS_BASE
-    MOV RAX, [RCX + 9Ch]
+    MOV RAX, [R10 + 9Ch]
+    MOV RDX, RAX
+    SHR RDX, 32
     WRMSR
-    MOV RCX, IA32_GS_BASE
-    MOV RAX, [RCX + 0A4h]
+
+    ; User GS base -> the inactive slot; swapgs hands it to ring 3.
+    MOV RCX, IA32_KERNEL_GS_BASE
+    MOV RAX, [R10 + 0A4h]
+    MOV RDX, RAX
+    SHR RDX, 32
     WRMSR
 
-    ; Restore segment registers (data segments)
-    MOV DS, [RCX + 94h]
-    MOV ES, [RCX + 96h]
-    MOV FS, [RCX + 98h]
-    MOV GS, [RCX + 9Ah]
+    ; Segment registers (data segments)
+    MOV DS, WORD PTR [R10 + 94h]
+    MOV ES, WORD PTR [R10 + 96h]
+    MOV FS, WORD PTR [R10 + 98h]
+    MOV GS, WORD PTR [R10 + 9Ah]
 
-    ; Restore RFLAGS
-    PUSH QWORD PTR [RCX + 88h]
-    POPFQ
+    ; (No early POPFQ: iretq applies RFLAGS atomically.)
 
-    ; Restore RSP
-    MOV RSP, [RCX + 80h]
+    ; Caller-saved registers (RCX/RDI handled at the end)
+    MOV R11, [R10 + 78h]
+    MOV R9,  [R10 + 68h]
+    MOV R8,  [R10 + 60h]
+    MOV RAX, [R10 + 58h]
+    MOV RDX, [R10 + 48h]
+    MOV RSI, [R10 + 40h]
 
-    ; Restore caller-saved registers
-    MOV R11, [RCX + 78h]
-    MOV R10, [RCX + 70h]
-    MOV R9, [RCX + 68h]
-    MOV R8, [RCX + 60h]
-    MOV RAX, [RCX + 58h]
-    MOV RCX, [RCX + 50h]
-    MOV RDX, [RCX + 48h]
-    MOV RSI, [RCX + 40h]
-    MOV RDI, [RCX + 38h]
+    ; Callee-saved registers
+    MOV R15, [R10 + 00h]
+    MOV R14, [R10 + 08h]
+    MOV R13, [R10 + 10h]
+    MOV R12, [R10 + 18h]
+    MOV RBX, [R10 + 20h]
+    MOV RBP, [R10 + 28h]
 
-    ; Restore RIP and callee-saved via IRETQ
-    ; Stack layout for IRETQ: RIP, CS, RFLAGS, RSP, SS
-    PUSH QWORD PTR [RCX + 20h]  ; SS
-    PUSH QWORD PTR [RCX + 80h]  ; RSP
-    PUSH QWORD PTR [RCX + 88h]  ; RFLAGS
-    PUSH QWORD PTR [RCX + 08h]  ; CS
-    PUSH QWORD PTR [RCX + 30h]  ; RIP
+    ; Switch to the target stack, then build the IRETQ frame on it.
+    ; iretq pops RIP, CS, RFLAGS, RSP, SS — push in reverse order.
+    MOV RSP, [R10 + 80h]
+    MOVZX RAX, WORD PTR [R10 + 92h]  ; SS  (0x92 — not 0x20)
+    PUSH RAX
+    MOV RAX, [R10 + 80h]             ; RSP
+    PUSH RAX
+    MOV RAX, [R10 + 88h]             ; RFLAGS — applied once, here
+    PUSH RAX
+    MOVZX RAX, WORD PTR [R10 + 90h]  ; CS  (0x90 — not 0x08)
+    PUSH RAX
+    MOV RAX, [R10 + 30h]             ; RIP
+    PUSH RAX
 
-    ; Restore callee-saved
-    MOV RBP, [RCX + 28h]
-    MOV RBX, [RCX + 20h]
-    MOV R12, [RCX + 18h]
-    MOV R13, [RCX + 10h]
-    MOV R14, [RCX + 08h]
-    MOV R15, [RCX + 00h]
+    ; RDI and RCX last: R10 was the ctx pointer until now.
+    MOV RDI, [R10 + 38h]
+    MOV RCX, [R10 + 50h]
 
     IRETQ
 restore_context ENDP

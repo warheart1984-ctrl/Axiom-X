@@ -152,7 +152,7 @@ pub fn load(root: PhysFrame<Size4KiB>, bytes: &[u8], image: &ElfImage) -> Result
                 let src = &bytes[(seg.offset + page_off) as usize..][..n];
                 unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), dst, n) };
             }
-            map_page_in(root, va, frame.start_address().as_u64(), flags);
+            map_page_in(root.start_address().as_u64(), va, frame.start_address().as_u64(), flags);
             pages += 1;
             va += PAGE;
         }

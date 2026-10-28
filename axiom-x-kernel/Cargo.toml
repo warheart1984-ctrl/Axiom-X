@@ -1,9 +1,9 @@
 [package]
 name = "axiom-x-kernel"
-version = { workspace = true }
-edition = { workspace = true }
-license = { workspace = true }
-repository = { workspace = true }
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/sovereign-x/axiom-x"
 rust-version = "1.80"
 
 [dependencies]
@@ -13,12 +13,12 @@ axiom-x-arch = { path = "../axiom-x-arch", default-features = false }
 axiom-x-arch-x86_64 = { path = "../axiom-x-arch-x86_64", default-features = false }
 axiom-x-boot = { path = "../axiom-x-boot", default-features = false }
 axiom-x-sys = { path = "../axiom-x-sys", default-features = false }
-darz-kernel = { path = "../../Wolf-CoG-OS/darz-kernel", default-features = false }
 bitflags = { workspace = true }
 heapless = { workspace = true }
 spin = { workspace = true }
 volatile = { workspace = true }
 log = { workspace = true }
+x86_64 = { workspace = true }
 
 [features]
 default = ["std"]

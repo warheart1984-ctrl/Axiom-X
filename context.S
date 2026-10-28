@@ -10,6 +10,12 @@
 ;   fs_base=0x9c gs_base=0xa4 cr3=0xac
 ;
 ; System V ABI: first argument (ctx pointer) in RDI.
+;
+; Ordering follows the mechanism semantics reverse-engineered from Linux
+; 7.0.0-39-generic (evidence/RE-LINUX-MECHANISMS-EVIDENCE-2026-10-28.md):
+; the switch is the rsp swap into a per-task slot; FS/GS base, segment and
+; rflags state ride in the saved context; RFLAGS is applied once, atomically,
+; by iretq — never early via popfq.
 
 section .text
 global save_context
@@ -18,8 +24,23 @@ global restore_context
 ; ============================================================
 ; save_context(ctx: *mut CpuContext)
 ; ============================================================
+; Called from context_switch() while the outgoing process is Running.
+; [rsp] holds our return address -> ctx.rip; rsp+8 is the resume rsp.
 save_context:
     ; RDI = ctx pointer
+
+    ; ---- Caller-saved FIRST: rax must be stored before it is used as
+    ;      scratch for the return address (bug: storing rax after loading
+    ;      the rip value saved RIP into ctx.rax and lost the real rax). ----
+    mov [rdi + 0x58], rax        ; real rax
+    mov [rdi + 0x38], rdi        ; ctx pointer itself (restored last)
+    mov [rdi + 0x40], rsi
+    mov [rdi + 0x48], rdx
+    mov [rdi + 0x50], rcx
+    mov [rdi + 0x60], r8
+    mov [rdi + 0x68], r9
+    mov [rdi + 0x70], r10
+    mov [rdi + 0x78], r11
 
     ; ---- Callee-saved registers ----
     mov [rdi + 0x00], r15
@@ -33,22 +54,11 @@ save_context:
     mov rax, [rsp]
     mov [rdi + 0x30], rax
 
-    ; ---- Caller-saved registers ----
-    mov [rdi + 0x38], rdi        ; ctx pointer itself (will be restored later)
-    mov [rdi + 0x40], rsi
-    mov [rdi + 0x48], rdx
-    mov [rdi + 0x50], rcx
-    mov [rdi + 0x58], rax
-    mov [rdi + 0x60], r8
-    mov [rdi + 0x68], r9
-    mov [rdi + 0x70], r10
-    mov [rdi + 0x78], r11
-
     ; ---- RSP (points past the return address) ----
     lea rax, [rsp + 8]
     mov [rdi + 0x80], rax
 
-    ; ---- RFLAGS ----
+    ; ---- RFLAGS (saved only; iretq applies it on restore) ----
     pushfq
     pop rax
     mov [rdi + 0x88], rax
@@ -61,15 +71,19 @@ save_context:
     mov [rdi + 0x98], fs
     mov [rdi + 0x9a], gs
 
-    ; ---- FS base (IA32_FS_BASE = 0xC0000100) ----
+    ; ---- FS base (IA32_FS_BASE = 0xC0000100): real TLS base, unswapped ----
     mov ecx, 0xC0000100
     rdmsr
     shl rdx, 32
     or rax, rdx
     mov [rdi + 0x9c], rax
 
-    ; ---- GS base (IA32_GS_BASE = 0xC0000101) ----
-    mov ecx, 0xC0000101
+    ; ---- GS base: we are in kernel mode, so IA32_GS_BASE (0xC0000101)
+    ;      holds the KERNEL base. The user GS base lives in the inactive
+    ;      slot IA32_KERNEL_GS_BASE (0xC0000102) — Linux's
+    ;      __rdgsbase_inactive equivalent. ctx.gs_base is documented as
+    ;      per-process TLS state -> save the inactive (user) base. ----
+    mov ecx, 0xC0000102
     rdmsr
     shl rdx, 32
     or rax, rdx
@@ -84,22 +98,31 @@ save_context:
 ; ============================================================
 ; restore_context(ctx: *const CpuContext) -> !
 ; ============================================================
+; Switches address space, restores TLS/segment state, moves to the target
+; stack, builds the iretq frame there, and jumps. RFLAGS is applied exactly
+; once — by iretq — so no interrupt can observe a half-restored context.
+; Linux's __switch_to zeroes caller-saved regs before return for speculation
+; hygiene; here every register is loaded from ctx, so any leftover value is
+; process-intended state, and fresh contexts start zeroed by Default.
 restore_context:
-    ; RDI = ctx pointer (must preserve until rdi is restored)
+    ; RDI = ctx pointer (kernel-mapped in every address space — the physmap
+    ; covers it after the CR3 switch below)
 
     ; ---- CR3 first: switch address space ----
     mov rax, [rdi + 0xac]
     mov cr3, rax
 
-    ; ---- FS base ----
+    ; ---- FS base (IA32_FS_BASE) ----
     mov ecx, 0xC0000100
     mov rax, [rdi + 0x9c]
     mov rdx, rax
     shr rdx, 32
     wrmsr
 
-    ; ---- GS base ----
-    mov ecx, 0xC0000101
+    ; ---- GS base: write the INACTIVE slot (IA32_KERNEL_GS_BASE = 0xC0000102)
+    ;      so the next swapgs on kernel exit hands this base to ring 3.
+    ;      Writing active GS_BASE here would corrupt the kernel's own GS. ----
+    mov ecx, 0xC0000102
     mov rax, [rdi + 0xa4]
     mov rdx, rax
     shr rdx, 32
@@ -111,9 +134,7 @@ restore_context:
     mov fs, word [rdi + 0x98]
     mov gs, word [rdi + 0x9a]
 
-    ; ---- RFLAGS ----
-    push qword [rdi + 0x88]
-    popfq
+    ; (No early popfq: iretq restores RFLAGS atomically with CS/RIP/RSP/SS.)
 
     ; ---- Restore caller-saved registers except RDI (our ctx pointer) ----
     mov r11, [rdi + 0x78]
@@ -125,29 +146,29 @@ restore_context:
     mov rdx, [rdi + 0x48]
     mov rsi, [rdi + 0x40]
 
-    ; ---- Switch to target stack ----
-    mov rsp, [rdi + 0x80]
-
-    ; ---- Build IRETQ frame: pops RIP, CS, RFLAGS, RSP, SS ----
-    ; Push in reverse order: SS, RSP, RFLAGS, CS, RIP
-    movzx rax, word [rdi + 0x92]   ; SS
-    push rax
-    mov rax, [rdi + 0x80]          ; RSP
-    push rax
-    mov rax, [rdi + 0x88]          ; RFLAGS
-    push rax
-    movzx rax, word [rdi + 0x90]   ; CS
-    push rax
-    mov rax, [rdi + 0x30]          ; RIP
-    push rax
-
-    ; ---- Restore callee-saved registers (RDI last) ----
+    ; ---- Callee-saved registers ----
     mov r15, [rdi + 0x00]
     mov r14, [rdi + 0x08]
     mov r13, [rdi + 0x10]
     mov r12, [rdi + 0x18]
     mov rbx, [rdi + 0x20]
     mov rbp, [rdi + 0x28]
-    mov rdi, [rdi + 0x38]          ; RDI loaded from context (old RDI still valid for the address)
+
+    ; ---- Switch to the target stack and build the IRETQ frame on it.
+    ;      iretq pops RIP, CS, RFLAGS, RSP, SS — push in reverse order. ----
+    mov rsp, [rdi + 0x80]
+    movzx rax, word [rdi + 0x92]   ; SS
+    push rax
+    mov rax, [rdi + 0x80]          ; RSP (the post-iretq value)
+    push rax
+    mov rax, [rdi + 0x88]          ; RFLAGS — applied once, here
+    push rax
+    movzx rax, word [rdi + 0x90]   ; CS
+    push rax
+    mov rax, [rdi + 0x30]          ; RIP
+    push rax
+
+    ; ---- RDI last: it was the ctx pointer until now ----
+    mov rdi, [rdi + 0x38]
 
     iretq

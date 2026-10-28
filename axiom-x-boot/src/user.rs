@@ -19,11 +19,13 @@ use core::arch::global_asm;
 use core::ptr::addr_of;
 use core::sync::atomic::Ordering;
 
-use x86_64::structures::paging::PageTableFlags;
+use x86_64::structures::paging::{PageTableFlags, PhysFrame, Size4KiB};
+use x86_64::PhysAddr;
 
 use axiom_x_arch::process::{Process, ProcessState};
 
 use crate::{alloc_boot_frame, alloc_kernel_stack, frames_in_use, map_page_in, new_address_space, serial_puts};
+use crate::elf_loader::ElfLoader;
 
 /// User code page (PML4 slot 1), identical in every process.
 const USER_CODE_VA: u64 = 0x0000_0080_0000_0000;
@@ -204,8 +206,8 @@ fn spawn_embedded(prog: &UserProgram) {
         core::ptr::write_bytes(stack as *mut u8, 0, 4096);
     }
     // Code: user, read + execute (not writable). Stack: user, RW, no-exec.
-    map_page_in(root, USER_CODE_VA, code, PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE);
-    map_page_in(root, USER_STACK_VA, stack, user_rw());
+    map_page_in(root.start_address().as_u64(), USER_CODE_VA, code, PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE);
+    map_page_in(root.start_address().as_u64(), USER_STACK_VA, stack, user_rw());
 
     let kstack = alloc_kernel_stack();
     let pid = axiom_x_arch::sched::spawn_user_process(
@@ -229,39 +231,44 @@ fn user_rw() -> PageTableFlags {
 /// Validate, load and start an ELF image as a child of `parent` (`None` =
 /// the kernel). Returns the PID or a negative errno; a rejected image never
 /// becomes a process and leaves nothing allocated.
-fn spawn_elf(name: &str, bytes: &[u8], parent: Option<u32>, rights: Rights) -> Result<u32, i64> {
+fn spawn_elf_loader(name: &str, bytes: &[u8], parent: Option<u32>, rights: Rights) -> Result<u32, i64> {
     use axiom_x_arch::syscall::ENOEXEC;
     const ENOMEM: i64 = 12;
-    let image = crate::elf::parse(bytes).map_err(|why| {
+
+    // Validate ELF header
+    let (_entry, _phnum) = ElfLoader::validate(bytes).map_err(|why| {
         serial_print!("[kernel] ELF '{}' rejected: {}\n", name, why);
         -ENOEXEC
     })?;
-    let root = new_address_space();
-    let pages = match crate::elf::load(root, bytes, &image) {
-        Ok(p) => p,
-        Err(why) => {
+
+    // Create address space and load segments
+    let (mut loader, root) = ElfLoader::new_address_space()
+        .map_err(|_| -ENOMEM)?;
+    loader.load_segments(bytes, parent.unwrap_or(0))
+        .map_err(|why| {
             serial_print!("[kernel] ELF '{}' failed to load: {}\n", name, why);
-            crate::free_address_space(root);
-            return Err(-ENOMEM);
-        }
-    };
+            crate::free_address_space(PhysFrame::containing_address(PhysAddr::new(root)));
+            -ENOMEM
+        })?;
+
+    // Map stack pages
     for i in 1..=ELF_STACK_PAGES {
         let f = unsafe { alloc_boot_frame() }.ok_or(-ENOMEM)?.start_address().as_u64();
         unsafe { core::ptr::write_bytes(f as *mut u8, 0, 4096) };
         map_page_in(root, ELF_STACK_TOP - i * 4096, f, user_rw());
     }
+
     let kstack = alloc_kernel_stack();
-    let pid = axiom_x_arch::sched::spawn_user_process(image.entry, ELF_STACK_TOP, kstack, root, parent, rights, name)
-        .map_err(|_| -ENOMEM)?;
+    let pid = axiom_x_arch::sched::spawn_user_process(
+        _entry, ELF_STACK_TOP, kstack, PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(root)), parent, rights, name,
+    ).map_err(|_| -ENOMEM)?;
     serial_print!(
-        "[kernel] loaded ELF '{}' as pid {} (parent {}): {} bytes, {} segments, {} pages, PML4 {:#x}\n",
+        "[kernel] loaded ELF '{}' as pid {} (parent {}): {} bytes, PML4 {:#x}\n",
         name,
         pid,
         parent.map_or(0, |p| p),
         bytes.len(),
-        image.segments.len(),
-        pages,
-        root.start_address().as_u64()
+        root
     );
     Ok(pid)
 }
@@ -271,7 +278,7 @@ fn spawn_elf(name: &str, bytes: &[u8], parent: Option<u32>, rights: Rights) -> R
 /// on read; the syscall layer has already required READ).
 fn spawn_module_hook(name: &str, parent: u32, rights: Rights) -> i64 {
     if name.starts_with('/') {
-        return match axiom_x_arch::fsys::with_program(name, |bytes| spawn_elf(name, bytes, Some(parent), rights)) {
+        return match axiom_x_arch::fsys::with_program(name, |bytes| spawn_elf_loader(name, bytes, Some(parent), rights)) {
             Ok(Ok(pid)) => pid as i64,
             Ok(Err(e)) | Err(e) => e,
         };
@@ -282,7 +289,7 @@ fn spawn_module_hook(name: &str, parent: u32, rights: Rights) -> i64 {
     }
     match crate::boot_modules().iter().find(|m| m.name() == name) {
         None => -axiom_x_arch::syscall::ENOENT,
-        Some(m) => match spawn_elf(name, m.bytes(), Some(parent), rights) {
+        Some(m) => match spawn_elf_loader(name, m.bytes(), Some(parent), rights) {
             Ok(pid) => pid as i64,
             Err(e) => e,
         },
@@ -477,7 +484,7 @@ fn spawn_round() -> usize {
     }
     match crate::boot_modules().iter().find(|m| m.name() == USER_INIT_MODULE) {
         Some(m) => {
-            if let Ok(pid) = spawn_elf(USER_INIT_MODULE, m.bytes(), None, INIT_RIGHTS) {
+            if let Ok(pid) = spawn_elf_loader(USER_INIT_MODULE, m.bytes(), None, INIT_RIGHTS) {
                 kernel_grant(pid, INIT_RIGHTS);
                 started += 1;
             }
@@ -583,7 +590,7 @@ pub fn run_shell() {
         axiom_x_arch::syscall::TRACE.store(false, Ordering::SeqCst);
     }
     loop {
-        let Ok(pid) = spawn_elf(SHELL_MODULE, m.bytes(), None, SHELL_RIGHTS) else {
+        let Ok(pid) = spawn_elf_loader(SHELL_MODULE, m.bytes(), None, SHELL_RIGHTS) else {
             serial_puts("[kernel] cannot start the shell\n");
             return;
         };
