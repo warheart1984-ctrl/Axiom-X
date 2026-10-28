@@ -153,6 +153,9 @@ pub struct Process {
     pub wake_at_ns: u64,
     /// While `Blocked` in `wait4`: the child awaited (-1 = any, 0 = none).
     pub waiting_for: i64,
+    /// When this process last entered Runnable (monotonic ns); feeds
+    /// `metrics.latency` — the starvation term of the cost function.
+    pub runnable_since: u64,
     /// Capability rights held (`axiom_x_capability::Rights` bits). Kernel
     /// threads hold all; a user process holds what its creator granted.
     pub rights: u64,
@@ -578,6 +581,7 @@ pub fn init_kernel_process(
         saved_rsp: 0,
         wake_at_ns: 0,
         waiting_for: 0,
+        runnable_since: 0,
         rights: u64::MAX,
         name: *b"kernel-init\0\0\0\0\0",
         page_table_root,
@@ -616,6 +620,7 @@ pub fn init_user_process(
         saved_rsp: 0,
         wake_at_ns: 0,
         waiting_for: 0,
+        runnable_since: 0,
         rights: 0,
         name: [0; 16],
         page_table_root,

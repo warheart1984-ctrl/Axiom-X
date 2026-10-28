@@ -117,6 +117,16 @@ pub fn schedule(frame_rsp: u64) -> u64 {
             p.waiting_for = 0;
             p.state = ProcessState::Runnable;
         }
+        // A process that just became runnable starts accruing wait; one
+        // that stays blocked keeps whatever wait it had (it can't run).
+        if p.state == ProcessState::Runnable && p.runnable_since == 0 {
+            p.runnable_since = now;
+        }
+        // Decay cpu_load for anything not running — keeps the share metric
+        // honest between ticks.
+        if p.state != ProcessState::Running {
+            p.metrics.cpu_load *= 0.9;
+        }
     }
 
     let cur = current_pid();
@@ -126,14 +136,41 @@ pub fn schedule(frame_rsp: u64) -> u64 {
         p.saved_rsp = frame_rsp;
         if p.state == ProcessState::Running {
             p.state = ProcessState::Runnable;
+            if p.runnable_since == 0 {
+                p.runnable_since = now;
+            }
         }
+        // The thread that just ran pays for its CPU share; metrics feed
+        // the next decision's J.
+        p.metrics.cpu_load = p.metrics.cpu_load * 0.9 + 0.1;
     }
 
-    let n = procs.len();
-    let start = cur_idx.map_or(0, |i| i + 1);
-    let next = (0..n)
-        .map(|k| (start + k) % n)
-        .find(|&i| procs[i].state == ProcessState::Runnable && procs[i].saved_rsp != 0);
+    // J-scored pick: candidates are ranked by α·wait + β·load + γ·thermal
+    // with the wait term negated — the most-starved, lightest process
+    // sorts lowest and runs first. Fairness from the cost function,
+    // not from a ring.
+    let mut next: Option<usize> = None;
+    let mut best_j = f64::MAX;
+    for (i, p) in procs.iter().enumerate() {
+        if p.state != ProcessState::Runnable || p.saved_rsp == 0 {
+            continue;
+        }
+        let w = &p.profile.weights();
+        let wait_ms = now.saturating_sub(p.runnable_since) as f64 / 1e6;
+        let j = -w.alpha * wait_ms + w.beta * p.metrics.cpu_load + w.gamma * p.metrics.thermal_cost;
+        if j < best_j {
+            best_j = j;
+            next = Some(i);
+        }
+    }
+    // Record the winner's measured wait in its metrics — evidence the
+    // cost function is fed real data, then clear its wait clock.
+    if let Some(i) = next {
+        let p = &mut procs[i];
+        p.metrics.latency = now.saturating_sub(p.runnable_since) as f64 / 1e6;
+        p.runnable_since = 0;
+    }
+    let next = next;
     let Some(ni) = next else {
         // Nothing else can run: keep the current thread if it still may,
         // otherwise report that there is nothing to resume (0).
