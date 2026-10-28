@@ -1,6 +1,7 @@
 //! Axiom-X user-space runtime.
 //!
-//! System calls go through `int 0x80` with the Linux x86_64 numbering the
+//! System calls go through the `syscall` instruction (int 0x80 remains as a
+//! fallback gate) with the Linux x86_64 numbering the
 //! kernel implements: RAX = number, RDI/RSI/RDX = arguments, RAX = result
 //! (negative errno on failure). `entry!` provides `_start`; `println!`
 //! formats without an allocator.
@@ -79,13 +80,17 @@ pub mod errno {
 #[inline(always)]
 pub unsafe fn syscall3(nr: u64, a0: u64, a1: u64, a2: u64) -> i64 {
     let ret: i64;
-    // The kernel's entry stub preserves every register except RAX.
+    // `syscall` clobbers RCX (return RIP) and R11 (saved RFLAGS); the
+    // kernel's entry preserves everything else. int 0x80 stays as a
+    // fallback gate.
     asm!(
-        "int 0x80",
+        "syscall",
         inlateout("rax") nr as i64 => ret,
         in("rdi") a0,
         in("rsi") a1,
         in("rdx") a2,
+        out("rcx") _,
+        out("r11") _,
         options(nostack)
     );
     ret
@@ -99,12 +104,14 @@ pub unsafe fn syscall3(nr: u64, a0: u64, a1: u64, a2: u64) -> i64 {
 pub unsafe fn syscall4(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     let ret: i64;
     asm!(
-        "int 0x80",
+        "syscall",
         inlateout("rax") nr as i64 => ret,
         in("rdi") a0,
         in("rsi") a1,
         in("rdx") a2,
         in("r10") a3,
+        out("rcx") _,
+        out("r11") _,
         options(nostack)
     );
     ret

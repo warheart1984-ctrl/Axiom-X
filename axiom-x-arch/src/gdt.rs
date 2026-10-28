@@ -69,6 +69,7 @@ pub fn init_gdt() {
     unsafe {
         let tss = addr_of_mut!(TSS);
         (*tss).privilege_stack_table[0] = ring0_stack_top();
+        crate::interrupts::set_syscall_rsp0(ring0_stack_top());
         (*tss).interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] =
             stack_top(addr_of!(DOUBLE_FAULT_STACK));
     }
@@ -104,4 +105,5 @@ pub fn init_gdt() {
 /// next interrupt or syscall arrives from ring 3. Call with interrupts off.
 pub fn set_kernel_stack(top: VirtAddr) {
     unsafe { (*addr_of_mut!(TSS)).privilege_stack_table[0] = top };
+    crate::interrupts::set_syscall_rsp0(top);
 }

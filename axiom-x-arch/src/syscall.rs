@@ -173,8 +173,8 @@ pub unsafe extern "C" fn int80_entry() -> ! {
 }
 
 /// Returns the RSP of the frame to resume: this one, or another thread's
-/// after `exit`.
-extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
+/// after `exit`. Shared by the `int 0x80` gate and the `syscall` entry.
+pub(crate) extern "C" fn syscall_dispatch(frame_rsp: u64) -> u64 {
     // The whole call runs with interrupts off (int 0x80 is an interrupt
     // gate): time it for the latency table.
     let t0 = crate::latency::now();

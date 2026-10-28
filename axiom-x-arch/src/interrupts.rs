@@ -362,8 +362,10 @@ pub fn init_syscall() {
         // LSTAR: syscall entry point (64-bit)
         LStar::write(VirtAddr::new(syscall_entry as u64));
 
-        // SFMASK: RFLAGS mask (clear IF, TF, DF, NT, RF)
-        SFMask::write(RFlags::from_bits_truncate(0x0000_0200)); // Clear IF
+        // SFMASK: flags the `syscall` instruction clears on entry — the
+        // Linux set (TF, DF, IF, IOPL, AC, NT): no single-step, no string
+        // direction, no user IOPL leaking into ring 0.
+        SFMask::write(RFlags::from_bits_truncate(0x0004_7700));
 
         // Enable SYSCALL/SYSRET in EFER
         let mut efer = Efer::read();
@@ -415,10 +417,28 @@ let decision = scheduler.tick(&[]);
     }
 }
 
-/// SYSCALL entry point — Windows/msvc uses the COFF implementation in
-/// `context.asm` (ml64). Bare-metal targets (`x86_64-unknown-none`) have no
-/// external assembler, so the ELF/System V implementation is inline asm below.
-/// The register-frame layout must match `SyscallFrame` exactly.
+/// Scratch for the user RSP during `syscall` entry — the instruction does
+/// not switch stacks and this kernel has no per-CPU GS area yet, so the
+/// user stack pointer is parked here while the kernel stack is loaded.
+/// Single-CPU only; a per-CPU slot replaces it when SMP lands.
+static mut SYSCALL_USER_RSP: u64 = 0;
+
+/// Mirror of TSS.rsp0 for the syscall-entry stub. Kept current by
+/// `gdt::set_kernel_stack` so each process's kernel stack is used.
+static mut SYSCALL_RSP0: u64 = 0;
+
+/// Called by `gdt::set_kernel_stack` on every context switch.
+pub fn set_syscall_rsp0(top: x86_64::VirtAddr) {
+    unsafe { SYSCALL_RSP0 = top.as_u64() }
+}
+
+/// SYSCALL entry point (64-bit `syscall` instruction; Windows/msvc uses the
+/// COFF implementation in `context.asm` (ml64)).
+///
+/// Hardware contract (from the RE'd `entry_SYSCALL_64`): RCX holds the user
+/// RIP, R11 the user RFLAGS, and the stack is NOT switched — the entry must
+/// build the frame `int 0x80` would have produced so the shared
+/// `syscall_dispatch` sees an identical `TrapFrame`.
 #[cfg(target_os = "windows")]
 unsafe extern "C" {
     pub fn syscall_entry() -> !;
@@ -428,60 +448,34 @@ unsafe extern "C" {
 #[unsafe(naked)]
 pub unsafe extern "C" fn syscall_entry() -> ! {
     naked_asm!(
-        // Swap to the kernel GS base, stash the user RSP in the per-CPU area
-        // and switch to the kernel stack.
-        "swapgs",
-        "mov gs:[0], rsp",
-        "mov rsp, gs:[8]",
-        // Save the register frame (push order must match SyscallFrame).
-        "push r15",
-        "push r14",
-        "push r13",
-        "push r12",
+        // No swapgs: the kernel does not use a per-CPU GS area; the user's
+        // GS base stays parked in KERNEL_GS_BASE per the context-switch
+        // convention.
+        "mov qword ptr [rip + {user_rsp}], rsp",
+        "mov rsp, qword ptr [rip + {rsp0}]",
+        // Synthesize the hardware frame (ss, rsp, rflags, cs, rip) that an
+        // interrupt gate would have pushed.
+        "push {user_ds}",
+        "push qword ptr [rip + {user_rsp}]",
         "push r11",
-        "push r10",
-        "push r9",
-        "push r8",
-        "push rsi",
-        "push rdi",
-        "push rbp",
-        "push rbx",
-        "push rdx",
+        "push {user_cs}",
         "push rcx",
-        "push rax",
-        // Dispatch (System V ABI: frame pointer in RDI).
+        // TrapFrame GPRs, same push order as trap_entry!.
+        "push rax", "push rbx", "push rcx", "push rdx", "push rsi",
+        "push rdi", "push rbp", "push r8", "push r9", "push r10",
+        "push r11", "push r12", "push r13", "push r14", "push r15",
+        "cld",
         "mov rdi, rsp",
         "call {dispatch}",
-        // Restore the frame.
-        "pop rax",
-        "pop rcx",
-        "pop rbx",
-        "pop rbp",
-        "pop rdi",
-        "pop rsi",
-        "pop r8",
-        "pop r9",
-        "pop r10",
-        "pop r11",
-        "pop r12",
-        "pop r13",
-        "pop r14",
-        "pop r15",
-        "swapgs",
-        "sysretq",
-        dispatch = sym syscall_dispatch,
+        "mov rsp, rax",
+        "pop r15", "pop r14", "pop r13", "pop r12", "pop r11",
+        "pop r10", "pop r9", "pop r8", "pop rbp", "pop rdi",
+        "pop rsi", "pop rdx", "pop rcx", "pop rbx", "pop rax",
+        "iretq",
+        user_rsp = sym SYSCALL_USER_RSP,
+        rsp0 = sym SYSCALL_RSP0,
+        user_ds = const crate::gdt::USER_DS as u64,
+        user_cs = const crate::gdt::USER_CS as u64,
+        dispatch = sym crate::syscall::syscall_dispatch,
     );
-}
-
-#[cfg(all(target_arch = "x86_64", not(target_os = "windows")))]
-unsafe fn syscall_dispatch(_frame: &SyscallFrame) {
-    // TODO: Implement syscall dispatch
-    log::debug!("Syscall dispatch");
-}
-
-struct SyscallFrame {
-    rax: u64, rcx: u64, rdx: u64, rbx: u64,
-    rbp: u64, rsi: u64, rdi: u64,
-    r8: u64, r9: u64, r10: u64, r11: u64,
-    r12: u64, r13: u64, r14: u64, r15: u64,
 }
