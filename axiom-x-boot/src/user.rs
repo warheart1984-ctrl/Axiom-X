@@ -331,6 +331,16 @@ fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u6
     unsafe {
         core::ptr::copy_nonoverlapping(req_ptr as *const u8, core::ptr::addr_of_mut!(REQ) as *mut u8, req_len as usize);
     }
+    // Both sides of the petition carry the same content hash — the kernel
+    // ledger and the gateway ledger can attest the same request bytes.
+    let h = axiom_x_ledger::sha256::sha256(unsafe {
+        core::slice::from_raw_parts(core::ptr::addr_of!(REQ) as *const u8, req_len as usize)
+    });
+    serial_print!(
+        "[egress] pid {} petition sha256 {:016x}..\n",
+        pid,
+        u64::from_be_bytes(h[..8].try_into().unwrap())
+    );
     com2_write(b"AXEG");
     com2_write(&req_len.to_le_bytes());
     com2_write(unsafe {
