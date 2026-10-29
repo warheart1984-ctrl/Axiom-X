@@ -248,9 +248,13 @@ fn mmap_hook(pid: u32, len: u64) -> i64 {
 /// COM2: the governed egress channel. Requests go out framed as
 /// "AXEG" + len64 + payload; the host proxy replies "RESP" + len64 +
 /// payload. Every call is a ledgered governed action (Rights::NET).
+/// Both sides hash the payload only — the 4-byte magic and the length
+/// are framing, not content. The proxy's frame cap is 64 KiB; a larger
+/// declared length is refused rather than hashed as a prefix.
 const COM2: u16 = 0x2f8;
 const EGRESS_REQ_MAX: usize = 4096;
 const EGRESS_RESP_MAX: usize = 8192;
+const EGRESS_FRAME_MAX: usize = 64 * 1024;
 const EGRESS_TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn com2_write(bytes: &[u8]) {
@@ -276,18 +280,20 @@ fn com2_read_exact(buf: &mut [u8], deadline: u64) -> bool {
 }
 
 /// Per-pid egress token bucket: the NET right grants the ability to
-/// petition; the rate limit bounds it. `BURST` petitions may go
-/// back-to-back; thereafter `RATE` per second.
+/// petition; the rate limit bounds it. `burst` petitions may go
+/// back-to-back (4 unless `axiom.egress.burst` says otherwise);
+/// thereafter `RATE` per second.
 const EGRESS_RATE_PER_SEC: u32 = 2;
-const EGRESS_BURST: u32 = 4;
 static mut EGRESS_BUCKETS: heapless::Vec<(u32, u64, u32), 128> = heapless::Vec::new();
+/// Self-test rounds for this boot (3 unless `axiom.rounds` says otherwise).
+static EGRESS_ROUNDS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(3);
 
 fn egress_allow(pid: u32, now: u64) -> bool {
     let v = unsafe { &mut *core::ptr::addr_of_mut!(EGRESS_BUCKETS) };
     let idx = match v.iter().position(|(p, _, _)| *p == pid) {
         Some(i) => i,
         None => {
-            if v.push((pid, now, EGRESS_BURST)).is_err() {
+            if v.push((pid, now, axiom_x_arch::syscall::egress_burst())).is_err() {
                 return false;
             }
             v.len() - 1
@@ -298,7 +304,7 @@ fn egress_allow(pid: u32, now: u64) -> bool {
     // retrying below the 1 s quantum must still accumulate them.
     let secs = (now - *last) / 1_000_000_000;
     if secs > 0 {
-        *tokens = (*tokens + secs as u32 * EGRESS_RATE_PER_SEC).min(EGRESS_BURST);
+        *tokens = (*tokens + secs as u32 * EGRESS_RATE_PER_SEC).min(axiom_x_arch::syscall::egress_burst());
         *last += secs * 1_000_000_000;
     }
     if *tokens == 0 {
@@ -331,15 +337,14 @@ fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u6
     unsafe {
         core::ptr::copy_nonoverlapping(req_ptr as *const u8, core::ptr::addr_of_mut!(REQ) as *mut u8, req_len as usize);
     }
-    // Both sides of the petition carry the same content hash — the kernel
-    // ledger and the gateway ledger can attest the same request bytes.
+    // Request hash is the unframed payload, same bytes the proxy hashes.
     let h = axiom_x_ledger::sha256::sha256(unsafe {
         core::slice::from_raw_parts(core::ptr::addr_of!(REQ) as *const u8, req_len as usize)
     });
     serial_print!(
         "[egress] pid {} petition sha256 {:016x}..\n",
         pid,
-        u64::from_be_bytes(h[..8].try_into().unwrap())
+        axiom_x_ledger::digest_log_prefix(&h)
     );
     com2_write(b"AXEG");
     com2_write(&req_len.to_le_bytes());
@@ -353,11 +358,46 @@ fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u6
     if !com2_read_exact(&mut magic, deadline) || !com2_read_exact(&mut lenb, deadline) || &magic != b"RESP" {
         return -EIO;
     }
-    let n = (u64::from_le_bytes(lenb) as usize).min(resp_max as usize);
-    if !com2_read_exact(unsafe { core::slice::from_raw_parts_mut(resp_ptr as *mut u8, n) }, deadline) {
+    let declared = u64::from_le_bytes(lenb);
+    if declared > EGRESS_FRAME_MAX as u64 {
+        serial_print!("[egress] pid {} response frame too large ({}B)\n", pid, declared);
         return -EIO;
     }
-    n as i64
+    // Hash every payload byte the proxy sent, then copy what fits in the
+    // caller's buffer. Stopping at `resp_max` would both desync the next
+    // frame and hash a different string than the proxy.
+    let mut hasher = axiom_x_ledger::Sha256::new();
+    let mut left = declared as usize;
+    let mut copied = 0usize;
+    let cap = resp_max as usize;
+    let mut chunk = [0u8; 128];
+    while left > 0 {
+        let n = left.min(chunk.len());
+        if !com2_read_exact(&mut chunk[..n], deadline) {
+            return -EIO;
+        }
+        hasher.update(&chunk[..n]);
+        let take = n.min(cap.saturating_sub(copied));
+        if take > 0 {
+            unsafe {
+                core::ptr::copy_nonoverlapping(chunk.as_ptr(), (resp_ptr as *mut u8).add(copied), take);
+            }
+            copied += take;
+        }
+        left -= n;
+    }
+    let digest = hasher.finalize();
+    serial_print!(
+        "[egress] pid {} response sha256 {:016x}.. ({}B)\n",
+        pid,
+        axiom_x_ledger::digest_log_prefix(&digest),
+        declared
+    );
+    // Interrupts stay off through the petition's ledger record so the
+    // staged response cannot be replaced by another caller.
+    x86_64::instructions::interrupts::disable();
+    governance::stage_egress_response(pid, declared as u32, digest);
+    copied as i64
 }
 
 /// Rights the kernel grants user-space init. Everything any process can
@@ -693,6 +733,23 @@ fn flush_ledger() {
     }
 }
 
+/// Apply `axiom.egress.*` and `axiom.rounds` from the kernel command line.
+/// Call before any user process runs.
+pub fn apply_egress_boot() {
+    let cfg = axiom_x_ledger::parse_egress_boot(crate::boot_cmdline());
+    axiom_x_arch::syscall::set_egress_boot(cfg.burst, cfg.petitions, cfg.probes);
+    let rounds = cfg.rounds.unwrap_or(axiom_x_ledger::DEFAULT_SELFTEST_ROUNDS);
+    EGRESS_ROUNDS.store(rounds, Ordering::Relaxed);
+    serial_print!(
+        "[egress] burst {} rate {}/s; workload petitions {}; egress probes {}; rounds {}\n",
+        cfg.burst,
+        EGRESS_RATE_PER_SEC,
+        cfg.petitions.unwrap_or(axiom_x_ledger::DEFAULT_EGRESS_PETITIONS),
+        cfg.probes.unwrap_or(axiom_x_ledger::DEFAULT_EGRESS_PROBES),
+        rounds
+    );
+}
+
 /// Install the hooks the syscall layer needs from the boot crate.
 pub fn install_hooks() {
     axiom_x_arch::syscall::set_process_end_hook(on_process_end);
@@ -763,12 +820,14 @@ fn reap() -> (u32, u64) {
     (n, frames)
 }
 
-/// Run the whole program set twice, reaping after each round. Equal
-/// "frames in use" after both rounds means process teardown, by `wait4`
-/// in user space or by the kernel reaper, returns everything allocated.
+/// Run the program set once per `axiom.rounds` (default 3), reaping after
+/// each round. Equal "frames in use" across all three rounds means process
+/// teardown returned everything allocated. Fewer than three rounds skips
+/// that comparison.
 pub fn run_rounds() {
+    let rounds = (EGRESS_ROUNDS.load(Ordering::Relaxed) as usize).clamp(1, 3);
     let mut after = [0u64; 3];
-    for round in 0..3 {
+    for round in 0..rounds {
         let before = frames_in_use();
         serial_print!("[kernel] === round {}: frames in use {} ===\n", round + 1, before);
         let started = spawn_round();
@@ -800,7 +859,12 @@ pub fn run_rounds() {
             round + 1, started, n, freed, left, before, after[round]
         );
     }
-    if after[0] == after[1] && after[1] == after[2] {
+    if rounds < 3 {
+        serial_print!(
+            "[kernel] reclamation check: not run ({} round(s); it compares 3)\n",
+            rounds
+        );
+    } else if after[0] == after[1] && after[1] == after[2] {
         serial_print!("[kernel] reclamation check: PASS (frames in use after each round: {})\n", after[1]);
     } else {
         serial_print!(

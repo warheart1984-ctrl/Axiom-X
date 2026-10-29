@@ -95,6 +95,12 @@ import hashlib
 
 
 def sha256_hex(data: bytes) -> str:
+    """First 16 hex chars of SHA-256 over the unframed payload.
+
+    That is the request bytes after ``AXEG`` + u64le, or the response
+    bytes after ``RESP`` + u64le. The kernel hashes those same bytes;
+    the 12-byte header is framing and must not enter the digest.
+    """
     return hashlib.sha256(data).hexdigest()[:16]
 
 

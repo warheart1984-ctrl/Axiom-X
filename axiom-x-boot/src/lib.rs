@@ -1114,6 +1114,7 @@ extern "C" fn init_process() -> ! {
         user::attach_ledger_disk();
         user::mount_fs();
         user::install_hooks();
+        user::apply_egress_boot();
         if cmdline_flag("axiom.selftest=off") {
             serial_puts("[kernel] self-tests skipped (axiom.selftest=off)\n");
         } else {

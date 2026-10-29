@@ -9,15 +9,21 @@ use axiom_x_user::{egress, entry, getpid, println};
 
 fn main() -> i32 {
     let pid = getpid();
-    println!("[elf-egress] pid {}: governed egress petition", pid);
+    // 8 attempts unless `axiom.egress.probes` set a count (0 sends nothing).
+    let attempts = match axiom_x_user::boot_cfg(axiom_x_user::nr::BOOTCFG_EGRESS_PROBES) {
+        n if n >= 0 => n as usize,
+        _ => axiom_x_ledger::DEFAULT_EGRESS_PROBES as usize,
+    };
+    println!("[elf-egress] pid {}: {} governed egress probes", pid, attempts);
 
     let req = b"GET /v1/models HTTP/1.1\r\nHost: llm-gateway\r\n\r\n";
     let mut resp = [0u8; 1024];
     // Hammer the channel: the per-pid token bucket should allow the
-    // burst (4) then start refusing (-EAGAIN) — visible rate limiting.
+    // burst (4, or `axiom.egress.burst`) then start refusing (-EAGAIN)
+    // when the upstream answers faster than the refill.
     let mut allowed = 0;
     let mut limited = 0;
-    for i in 0..8 {
+    for i in 0..attempts {
         let n = egress(req, &mut resp);
         if n < 0 {
             limited += 1;

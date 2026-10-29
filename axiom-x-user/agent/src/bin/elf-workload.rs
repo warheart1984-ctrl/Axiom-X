@@ -53,15 +53,19 @@ fn main() -> i32 {
     let req = req.into_bytes();
     println!("[workload] request: {} bytes", req.len());
 
-    // 3. NET: the load run — 25 governed petitions. Each is rights-gated,
-    //    rate-limited, and ledgered; -EAGAIN means the token bucket spoke,
-    //    so we sleep a beat and retry — the limiter IS the demo.
-    const PETITIONS: usize = 25;
+    // 3. NET: the load run. 25 governed petitions unless the boot set
+    //    `axiom.egress.petitions`. Each is rights-gated, rate-limited, and
+    //    ledgered; -EAGAIN means the token bucket spoke, so we sleep a beat
+    //    and retry — the limiter IS the demo.
+    let petitions = match axiom_x_user::boot_cfg(axiom_x_user::nr::BOOTCFG_EGRESS_PETITIONS) {
+        n if n > 0 => n as usize,
+        _ => axiom_x_user::ledger::DEFAULT_EGRESS_PETITIONS as usize,
+    };
     let mut allowed = 0usize;
     let mut limited = 0usize;
     let mut failed = 0usize;
     let mut resp = Vec::with_capacity(2048);
-    for i in 0..PETITIONS {
+    for i in 0..petitions {
         resp.clear();
         resp.resize(2048, 0u8);
         let mut tries = 0;
@@ -79,7 +83,7 @@ fn main() -> i32 {
             println!("[workload] petition {} -> {} ({})", i, n, tries);
         } else {
             allowed += 1;
-            if i == 0 || i == PETITIONS - 1 || i % 8 == 0 {
+            if i == 0 || i + 1 == petitions || i % 8 == 0 {
                 let head = resp[..n as usize].iter().position(|&b| b == b'\n').unwrap_or(n as usize).min(72);
                 if let Ok(s) = core::str::from_utf8(&resp[..head]) {
                     println!("[workload] petition {} -> {}: {}", i, n, s);
@@ -90,7 +94,7 @@ fn main() -> i32 {
     // 4. WRITE: persist a run summary through the anchored filesystem.
     let summary = alloc::format!(
         "petitions={} allowed={} rate_limited_retries={} failed={}\n",
-        PETITIONS, allowed, limited, failed
+        petitions, allowed, limited, failed
     );
     if fs_write(RESULT_FILE, summary.as_bytes()) < 0 {
         println!("[workload] cannot write result");

@@ -41,7 +41,20 @@ pub mod kind {
     /// File system mounted (decision ALLOW) or found inconsistent with the
     /// ledger / corrupt and mounted read-only (DENY); root hash as above.
     pub const FS_MOUNT: u32 = 102;
+    /// SHA-256 of an egress response payload (the bytes after `RESP` and
+    /// the little-endian length — not the 12-byte frame header). The digest
+    /// is split over `nr`, `arg`, `rights`, `result` the same way an FS root
+    /// is. `subject` is the payload length in bytes. `pid` is the petitioner.
+    /// The companion `CONTRACT_ENFORCE` record for `AX_EGRESS` (nr 537) is
+    /// the petition itself; it cannot also hold a 32-byte digest.
+    pub const EGRESS_RESPONSE: u32 = 103;
 }
+
+mod egress;
+pub use egress::{
+    digest_log_prefix, egress_response_of, egress_response_record, parse_egress_boot, EgressBoot,
+    DEFAULT_EGRESS_BURST, DEFAULT_EGRESS_PETITIONS, DEFAULT_EGRESS_PROBES, DEFAULT_SELFTEST_ROUNDS,
+};
 
 /// Outcome of the decision a record describes.
 pub mod decision {

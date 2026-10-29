@@ -59,6 +59,33 @@ pub const SYS_AX_MMAP: u64 = 536;
 /// Axiom-X `AxEgress`: send `a0`/`a1` request bytes over the governed
 /// channel and read the response into `a2`/`a3`; gated by `Rights::NET`.
 pub const SYS_AX_EGRESS: u64 = 537;
+/// Read one boot knob. `a0` is a `BOOTCFG_*` selector. Returns the value,
+/// or `-ENOENT` when an optional knob was left unset. No right: it reports
+/// the command line the operator already booted with.
+pub const SYS_AX_BOOTCFG: u64 = 538;
+pub const BOOTCFG_EGRESS_BURST: u64 = 1;
+pub const BOOTCFG_EGRESS_PETITIONS: u64 = 2;
+pub const BOOTCFG_EGRESS_PROBES: u64 = 3;
+
+/// `u32::MAX` means the operator did not set that optional knob.
+const BOOTCFG_UNSET: u32 = u32::MAX;
+static EGRESS_BURST_CFG: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(4);
+static EGRESS_PETITIONS_CFG: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(BOOTCFG_UNSET);
+static EGRESS_PROBES_CFG: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(BOOTCFG_UNSET);
+
+/// Install the egress knobs parsed from the kernel command line.
+/// `None` leaves petitions or probes unset (programs keep their defaults).
+pub fn set_egress_boot(burst: u32, petitions: Option<u32>, probes: Option<u32>) {
+    EGRESS_BURST_CFG.store(burst, core::sync::atomic::Ordering::Relaxed);
+    EGRESS_PETITIONS_CFG.store(petitions.unwrap_or(BOOTCFG_UNSET), core::sync::atomic::Ordering::Relaxed);
+    EGRESS_PROBES_CFG.store(probes.unwrap_or(BOOTCFG_UNSET), core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Token-bucket burst for this boot (at least 1).
+pub fn egress_burst() -> u32 {
+    let n = EGRESS_BURST_CFG.load(core::sync::atomic::Ordering::Relaxed);
+    if n == 0 { 4 } else { n }
+}
 pub const FS_ENTRY_BYTES: u64 = 96;
 
 /// Echo every syscall decision to the console (the ledger records them
@@ -310,6 +337,7 @@ fn syscall_dispatch_inner(frame_rsp: u64, t0: &mut u64) -> u64 {
                 EGRESS_HOOK.get().map_or(-ENOSYS, |h| h(pid, a0, a1, a2, a3))
             })
         }
+        SYS_AX_BOOTCFG => sys_bootcfg(a0),
         SYS_WAIT4 => match sys_wait4(pid, a0 as i64, a1) {
             WaitOutcome::Done(r) => r,
             WaitOutcome::Block => {
@@ -333,6 +361,11 @@ fn syscall_dispatch_inner(frame_rsp: u64, t0: &mut u64) -> u64 {
         });
     }
     crate::governance::record_syscall(pid, nr, a0, result, true);
+    // The response hash follows the petition record. Staged only when the
+    // hook actually received a full payload; a refusal leaves nothing.
+    if nr == SYS_AX_EGRESS {
+        crate::governance::commit_egress_response();
+    }
     // Evidence reads are ledgered like every call, but not echoed to the
     // console: an audit makes hundreds of them.
     if nr != SYS_AX_GET_EVIDENCE {
@@ -734,6 +767,16 @@ fn sys_write(fd: u64, buf: u64, len: u64) -> i64 {
     len as i64
 }
 
+fn sys_bootcfg(key: u64) -> i64 {
+    let raw = match key {
+        BOOTCFG_EGRESS_BURST => egress_burst(),
+        BOOTCFG_EGRESS_PETITIONS => EGRESS_PETITIONS_CFG.load(core::sync::atomic::Ordering::Relaxed),
+        BOOTCFG_EGRESS_PROBES => EGRESS_PROBES_CFG.load(core::sync::atomic::Ordering::Relaxed),
+        _ => return -EINVAL,
+    };
+    if raw == BOOTCFG_UNSET { -ENOENT } else { raw as i64 }
+}
+
 fn name_of(nr: u64) -> &'static str {
     match nr {
         SYS_READ => "read",
@@ -756,6 +799,7 @@ fn name_of(nr: u64) -> &'static str {
         SYS_AX_GET_EVIDENCE => "ax_get_evidence",
         SYS_AX_MMAP => "ax_mmap",
         SYS_AX_EGRESS => "ax_egress",
+        SYS_AX_BOOTCFG => "ax_bootcfg",
         _ => "unknown",
     }
 }

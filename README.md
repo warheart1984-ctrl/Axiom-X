@@ -22,6 +22,7 @@ Every row is backed by an evidence file in `evidence/`.
 | Rights checked per syscall; SHA-256 evidence ledger | enforced | `GOVERNANCE-EVIDENCE-2026-10-17.md` |
 | `AX_MMAP` governed heap + user `GlobalAlloc` (Vec/String work) | enforced | `serial-mb2.log` (`elf-heap`, `elf-agent`) |
 | `AX_EGRESS` governed channel to host proxy over COM2 | enforced | `serial-mb2.log` (`ax_egress -> 74`), `tools/egress-proxy.py` |
+| Egress response SHA-256 in the kernel log and ledger (`EGRESS_RESPONSE`) | enforced | `EGRESS-RESPONSE-EVIDENCE-2026-10-29.md` (stub upstream; a live-gateway capture is still open) |
 | Bounded rights: per-process frame quota + egress token bucket | enforced | `serial-mb2.log` (`owned X / 16384`, `refused (-11)`) |
 | Real agent workload (fs → heap → petition → result, all governed; upstream answer is environmental) | enforced | `serial-mb2.log` (`elf-workload` loop) |
 | Ledger persisted, crash-safe, Ed25519-signed, verified off-machine | enforced | `PERSIST-`, `CRASH-SAFETY-`, `SIGNED-LEDGER-EVIDENCE-2026-10-17.md` |
@@ -44,6 +45,12 @@ cargo test
 cargo build --target x86_64-unknown-none -p axiom-x-boot --bin kernel --no-default-features --features freestanding
 (cd axiom-x-user && CARGO_PROFILE_RELEASE_LTO=false cargo build --release --target x86_64-unknown-none)
 LIVE=1 KERNEL_CMDLINE=axiom.selftest=off sh ./qemu-boot.sh     # in WSL (QEMU + GRUB tools), Ctrl-C to stop
+```
+
+A 10-petition live-gateway capture (one self-test round, no `elf-egress` probes, burst 10 so none are refused). Defaults stay burst 4, workload 25, probes 8, rounds 3. Replace the key and upstream:
+
+```bash
+EGRESS_PROXY=1 EGRESS_GATEWAY_KEY='<key>' PROXY_UPSTREAM='http://<llm-gateway>' EGRESS_BURST=10 EGRESS_PETITIONS=10 EGRESS_PROBES=0 EGRESS_ROUNDS=1 sh ./qemu-boot.sh 180
 ```
 
 - **Hyper-V:** `hyperv-run.ps1`, from an elevated PowerShell. The script's header documents it.

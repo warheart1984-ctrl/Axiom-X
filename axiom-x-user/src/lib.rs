@@ -46,6 +46,12 @@ pub mod nr {
     /// Governed egress (needs `Rights::NET`); sends request bytes, returns
     /// response length or -errno.
     pub const AX_EGRESS: u64 = 537;
+    /// Boot knob. Selectors: burst, workload petitions, egress probes.
+    /// `-ENOENT` means the operator left an optional knob unset.
+    pub const AX_BOOTCFG: u64 = 538;
+    pub const BOOTCFG_EGRESS_BURST: u64 = 1;
+    pub const BOOTCFG_EGRESS_PETITIONS: u64 = 2;
+    pub const BOOTCFG_EGRESS_PROBES: u64 = 3;
 }
 
 /// errno values the kernel returns (negated).
@@ -334,6 +340,12 @@ pub fn mmap(len: usize) -> i64 {
 /// without the right). Every call is a ledgered governed action.
 pub fn egress(req: &[u8], resp: &mut [u8]) -> i64 {
     unsafe { syscall4(nr::AX_EGRESS, req.as_ptr() as u64, req.len() as u64, resp.as_mut_ptr() as u64, resp.len() as u64) }
+}
+
+/// Read a boot knob (`nr::BOOTCFG_*`). `-ENOENT` means it was left unset,
+/// so the caller keeps its built-in default. No special right.
+pub fn boot_cfg(key: u64) -> i64 {
+    unsafe { syscall3(nr::AX_BOOTCFG, key, 0, 0) }
 }
 
 /// How a child ended, decoded from the `wait4` status word.
