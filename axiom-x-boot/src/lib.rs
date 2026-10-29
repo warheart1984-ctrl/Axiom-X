@@ -75,7 +75,7 @@ pub struct BootInfo {
     /// Bootloader name
     pub bootloader_name: Vec<u8, 64>,
     /// Modules loaded by bootloader
-    pub modules: Vec<ModuleInfo, 16>,
+    pub modules: Vec<ModuleInfo, 24>,
     /// Framebuffer info (if available)
     pub framebuffer: Option<FramebufferInfo>,
 }
@@ -89,7 +89,7 @@ pub struct MemoryRegion {
 }
 
 /// Modules handed over by the bootloader, kept for init.
-static mut BOOT_MODULES: Vec<ModuleInfo, 16> = Vec::new();
+static mut BOOT_MODULES: Vec<ModuleInfo, 24> = Vec::new();
 /// Kernel command line from the bootloader, kept for init.
 static mut BOOT_CMDLINE: Vec<u8, 256> = Vec::new();
 

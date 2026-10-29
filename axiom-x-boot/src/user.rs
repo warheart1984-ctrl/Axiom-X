@@ -334,25 +334,34 @@ fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u6
     }
     // Both sides of the petition carry the same content hash — the kernel
     // ledger and the gateway ledger can attest the same request bytes.
-    let h = axiom_x_ledger::sha256::sha256(unsafe {
+    let req_hash = axiom_x_ledger::sha256::sha256(unsafe {
         core::slice::from_raw_parts(core::ptr::addr_of!(REQ) as *const u8, req_len as usize)
     });
     serial_print!(
         "[egress] pid {} petition sha256 {:016x}..\n",
         pid,
-        u64::from_be_bytes(h[..8].try_into().unwrap())
+        u64::from_be_bytes(req_hash[..8].try_into().unwrap())
     );
-    com2_write(b"AXEG");
+    com2_write(b"AXE2");
     com2_write(&req_len.to_le_bytes());
     com2_write(unsafe {
         core::slice::from_raw_parts(core::ptr::addr_of!(REQ) as *const u8, req_len as usize)
     });
+    com2_write(&req_hash);
 
     let deadline = axiom_x_arch::clock::monotonic_ns() + EGRESS_TIMEOUT_NS;
     let mut magic = [0u8; 4];
+    let mut status = [0u8; 1];
     let mut lenb = [0u8; 8];
-    if !com2_read_exact(&mut magic, deadline) || !com2_read_exact(&mut lenb, deadline) || &magic != b"RESP" {
+    if !com2_read_exact(&mut magic, deadline)
+        || !com2_read_exact(&mut status, deadline)
+        || !com2_read_exact(&mut lenb, deadline)
+        || &magic != b"RSP2"
+    {
         return -EIO;
+    }
+    if status[0] != 0 {
+        serial_print!("[egress] pid {} petition status {}\n", pid, status[0]);
     }
     let resp_len = u64::from_le_bytes(lenb) as usize;
     let attestable = resp_len <= 16384;
@@ -377,18 +386,28 @@ fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u6
     unsafe {
         core::ptr::copy_nonoverlapping(RESP_BUF.as_ptr(), resp_ptr as *mut u8, n);
     }
+    // Wire digest: sha256 over the whole response payload — the kernel
+    // verifies it before trusting the signature. A corrupted frame is -EIO,
+    // not silent bad data.
+    let mut wire_digest = [0u8; 32];
+    if !com2_read_exact(&mut wire_digest, deadline) {
+        return -EIO;
+    }
+    if attestable {
+        let mine = axiom_x_ledger::sha256::sha256(unsafe { &RESP_BUF[..resp_len] });
+        if mine != wire_digest {
+            serial_print!("[egress] pid {} frame digest mismatch — wire corruption\n", pid);
+            return -EIO;
+        }
+    }
     // Attestation trailer: 64-byte Ed25519 signature over
     // sha256(request) || sha256(response), when the proxy is keyed.
     let mut sig = [0u8; 64];
     if attestable && com2_read_exact(&mut sig, deadline) {
-        let resp_hash = axiom_x_ledger::sha256::sha256(unsafe { &RESP_BUF[..resp_len] });
         // The syscall record is appended right after this hook returns, so
         // it takes the ledger's next seq.
         let egress_seq = governance::ledger_summary().0;
-        let req_hash = axiom_x_ledger::sha256::sha256(unsafe {
-            core::slice::from_raw_parts(core::ptr::addr_of!(REQ) as *const u8, req_len as usize)
-        });
-        governance::record_egress_attest(pid, egress_seq, &req_hash, &resp_hash, &sig);
+        governance::record_egress_attest(pid, egress_seq, &req_hash, &wire_digest, &sig);
         serial_print!("[egress] pid {} attestation: proxy sig recorded (seq {})\n", pid, egress_seq);
     }
     n as i64

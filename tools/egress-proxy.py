@@ -124,21 +124,32 @@ def serve(conn: socket.socket):
     conn.settimeout(30)
     while True:
         magic = read_exact(conn, 4)
-        if magic != b"AXEG":
+        if magic != b"AXE2":
             raise ValueError(f"bad magic {magic!r}")
         (n,) = struct.unpack("<Q", read_exact(conn, 8))
         if n == 0 or n > MAX_FRAME:
             raise ValueError(f"bad frame length {n}")
         payload = read_exact(conn, n)
+        # Wire digest trailer: the kernel sends sha256(payload) so the proxy
+        # can detect corruption on the serial link before forwarding.
+        want = read_exact(conn, 32)
+        if hashlib.sha256(payload).digest() != want:
+            raise ValueError("request digest mismatch — wire corruption")
         resp = forward(payload)
+        # Status byte: 0 = upstream 2xx, 1 = non-2xx/error — the kernel logs
+        # it but still delivers the payload.
+        status = 0
+        parts = resp.split(b" ", 2)
+        if not resp.startswith(b"HTTP/") or len(parts) < 2 or not parts[1].startswith(b"2"):
+            status = 1
         log_line(
             f"[egress-proxy] petition sha256 {sha256_hex(payload)}.. "
-            f"-> {len(resp)}B response sha256 {sha256_hex(resp)}.."
+            f"-> {len(resp)}B response sha256 {sha256_hex(resp)}.. status {status}"
         )
-        trailer = b""
+        trailer = hashlib.sha256(resp).digest()
         if PROXY_SK is not None:
-            trailer = PROXY_SK.sign(hashlib.sha256(payload).digest() + hashlib.sha256(resp).digest())
-        conn.sendall(b"RESP" + struct.pack("<Q", len(resp)) + resp + trailer)
+            trailer += PROXY_SK.sign(hashlib.sha256(payload).digest() + hashlib.sha256(resp).digest())
+        conn.sendall(b"RSP2" + bytes([status]) + struct.pack("<Q", len(resp)) + resp + trailer)
 
 
 def main():
