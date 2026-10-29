@@ -148,7 +148,12 @@ timeout "$SECS" qemu-system-x86_64 -cdrom "$ISO" -boot d \
 
 if [ -n "$PROXY_LOG" ]; then
     kill "$PROXY_PID" 2>/dev/null || true
-    echo "=== proxy ($PROXY_LOG) ==="
+    # External rollback anchor: pin this disk's tip (pubkey, total, head) so
+# a future verify can tell a swapped/rolled-back image from the real one.
+if [ -n "${LEDGER_DISK:-}" ] && [ -f "$LEDGER_DISK" ] && [ -x target/debug/ledger-tool ]; then
+    ./target/debug/ledger-tool anchor "$LEDGER_DISK" || true
+fi
+echo "=== proxy ($PROXY_LOG) ==="
     tail -20 "$PROXY_LOG"
 fi
 

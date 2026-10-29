@@ -101,6 +101,106 @@ fn cmd_pubkey_seed(seed_path: &str) -> ExitCode {
     }
 }
 
+/// Off-disk rollback anchor: `evidence/ledger-anchor.txt` lines are
+/// `<pubkey> <total> <head>` — the last-known-good chain tip per disk
+/// identity. A disk that returns older than its anchor is a swap; a
+/// rebuilt chain has a different head at the same total.
+fn anchor_file() -> String {
+    std::env::var("ANCHOR_FILE").unwrap_or_else(|_| "evidence/ledger-anchor.txt".into())
+}
+
+fn cmd_anchor(image: &str) -> ExitCode {
+    let Ok(img) = std::fs::read(image) else {
+        eprintln!("{image}: cannot read");
+        return ExitCode::from(2);
+    };
+    let off = (store::IDENTITY_SECTOR as usize) * store::SECTOR;
+    let Some(pubk) = (img.len() > off + 72 && img[off..off + 8] == store::IDENTITY_MAGIC)
+        .then(|| hex(&img[off + 40..off + 72]))
+    else {
+        eprintln!("{image}: no disk identity sector — cannot attribute an anchor");
+        return ExitCode::from(1);
+    };
+    // Never anchor a disk that doesn't verify — the anchor is only as
+    // strong as the check that produced it.
+    let Ok((img, _)) = verify_ledger(image, &pubk, false) else {
+        eprintln!("{image}: failed verification — refused to anchor");
+        return ExitCode::from(1);
+    };
+    let (sb, _) = match pick(&img) {
+        Pick::Use(sb, w) => (sb, w),
+        other => {
+            eprintln!("{image}: no usable superblock ({other:?})");
+            return ExitCode::from(1);
+        }
+    };
+    let c = &sb.checkpoint;
+    let file = anchor_file();
+    let mut lines: Vec<String> = std::fs::read_to_string(&file)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let entry = format!("{} {} {}", pubk, c.total, hex(&c.head));
+    let mut done = false;
+    for l in lines.iter_mut() {
+        if l.starts_with(&format!("{pubk} ")) {
+            let parts: Vec<&str> = l.split_whitespace().collect();
+            let old_total: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            if c.total < old_total {
+                eprintln!("FAIL: disk tip {} is BEHIND anchored total {} — refused to lower the anchor", c.total, old_total);
+                return ExitCode::from(1);
+            }
+            *l = entry.clone();
+            done = true;
+        }
+    }
+    if !done {
+        lines.push(entry);
+    }
+    if std::fs::write(&file, lines.join("\n") + "\n").is_err() {
+        eprintln!("{file}: cannot write");
+        return ExitCode::from(2);
+    }
+    println!("anchor: {pubk} total {} head {}", c.total, &hex(&c.head)[..16]);
+    ExitCode::SUCCESS
+}
+
+/// Verify the disk still contains the anchored prefix: its total must be
+/// >= the anchored total and the chain head at that total must match.
+fn check_anchor(img: &[u8], pubkey: &str, total: u64) -> Result<(), ExitCode> {
+    let Ok(text) = std::fs::read_to_string(anchor_file()) else { return Ok(()) };
+    let Some(line) = text.lines().find(|l| l.starts_with(&format!("{pubkey} "))) else {
+        return Ok(());
+    };
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    let a_total: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let a_head = parts.get(2).copied().unwrap_or("");
+    if total < a_total {
+        println!("FAIL: disk shows {total} records but anchor recorded {a_total} — disk rolled back or swapped");
+        return Err(ExitCode::from(1));
+    }
+    if a_total == 0 {
+        return Ok(());
+    }
+    // Recompute the chain head at the anchored total — a disk whose chain
+    // was rebuilt can't match it even with the real seed.
+    match verify_window(0, a_total, |seq| slot(img, seq)) {
+        Ok(head) if hex(&head) == a_head => {
+            println!("anchor: prefix {} verified against {}", a_total, &a_head[..16]);
+            Ok(())
+        }
+        Ok(_) => {
+            println!("FAIL: chain head at record {} differs from the anchor — rebuilt evidence", a_total);
+            Err(ExitCode::from(1))
+        }
+        Err(e) => {
+            println!("FAIL: cannot re-verify anchored prefix: {e}");
+            Err(ExitCode::from(1))
+        }
+    }
+}
+
 fn cmd_verify(image: &str, pubkey: &str, raw: bool) -> ExitCode {
     match verify_ledger(image, pubkey, raw) {
         Ok(_) => ExitCode::SUCCESS,
@@ -288,6 +388,7 @@ fn verify_ledger(image: &str, pubkey: &str, raw: bool) -> Result<(Vec<u8>, u64),
         "PASS: {} records verified from genesis ({} BOOT records, {} denies); latest and {} archived checkpoints signed by {}",
         c.total, boots, denies, sb.archived, pubkey
     );
+    check_anchor(&img, pubkey, c.total)?;
     Ok((img, c.total))
 }
 
@@ -465,13 +566,14 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         [_, "pubkey", seed] => cmd_pubkey(seed),
+        [_, "anchor", image] => cmd_anchor(image),
         [_, "verify", image, pk] => cmd_verify(image, pk, false),
         [_, "verify", image, pk, "--raw"] => cmd_verify(image, pk, true),
         [_, "forge", image, seq] => cmd_forge(image, seq),
         [_, "fs-verify", fs, ledger, pk] => cmd_fs_verify(fs, ledger, pk),
         _ => {
             eprintln!(
-                "usage: ledger-tool pubkey <seed-file> | verify <disk-image> <pubkey-hex> [--raw] | fs-verify <fs-image> <ledger-image> <pubkey-hex> | forge <disk-image> <seq>"
+                "usage: ledger-tool pubkey <seed-file|disk-image> | anchor <disk-image> | verify <disk-image> <pubkey-hex> [--raw] | fs-verify <fs-image> <ledger-image> <pubkey-hex> | forge <disk-image> <seq>"
             );
             ExitCode::from(2)
         }
