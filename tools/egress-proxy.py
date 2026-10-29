@@ -11,6 +11,7 @@ Every petition the guest makes is a governed, ledgered action; this proxy
 is the only door out, so policy (rate limits, allowlists) can live here.
 """
 
+import os
 import socket
 import struct
 import sys
@@ -46,24 +47,69 @@ def allowed(payload: bytes) -> bool:
     return any(first.startswith(p.encode()) for p in ALLOWED_PREFIXES)
 
 
-def forward(payload: bytes) -> bytes:
-    """Send the request bytes to the upstream and return response bytes.
+# Tenant credential stays host-side: the guest petitions without secrets,
+# the proxy attaches `x-api-key` for the gateway's benchmark tenant.
+GATEWAY_KEY = os.environ.get("EGRESS_GATEWAY_KEY", "")
 
-    The guest sends a request line + headers; we hand the whole blob to the
-    upstream as a POST body for now (llm-gateway's /v1/chat accepts raw
-    bytes). A non-200 or unreachable upstream still gets a framed reply:
-    the petition was governed; the failure is evidence too.
+
+def parse_request(payload: bytes):
+    """Split 'METHOD PATH HTTP/1.1\\r\\nheaders\\r\\n\\r\\nbody' -> (method, path, body)."""
+    try:
+        head, _, body = payload.partition(b"\r\n\r\n")
+        request_line = head.split(b"\r\n", 1)[0].decode()
+        method, path, _ = request_line.split(" ", 2)
+        return method, path, body
+    except ValueError:
+        return None, None, b""
+
+
+def forward(payload: bytes) -> bytes:
+    """Send the request to the upstream and return response bytes.
+
+    The guest sends an HTTP-ish request; we translate it into a real HTTP
+    call against the configured upstream, injecting the tenant credential.
+    A non-200 or unreachable upstream still gets a framed reply: the
+    petition was governed; the failure is evidence too.
     """
     if not allowed(payload):
         return b"HTTP/1.1 403 Proxy Denied\r\n\r\npath not in allowlist"
+    method, path, body = parse_request(payload)
+    if not method or not path.startswith("/"):
+        return b"HTTP/1.1 400 Bad Request\r\n\r\nunparseable request line"
+    url = UPSTREAM.rstrip("/") + path
+    headers = {"Content-Type": "application/json"}
+    if GATEWAY_KEY:
+        headers["x-api-key"] = GATEWAY_KEY
     try:
-        req = urllib.request.Request(
-            UPSTREAM, data=payload, headers={"Content-Type": "application/octet-stream"}
-        )
+        req = urllib.request.Request(url, data=body or None, headers=headers, method=method)
         with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as r:
             return r.read()
+    except urllib.error.HTTPError as e:
+        # A real status from the gateway (401/402/429...) is data, not failure.
+        return e.read() or f"HTTP {e.code}".encode()
     except Exception as e:
         return f"HTTP/1.1 503 Proxy Error\r\n\r\n{e}".encode()
+
+
+import hashlib
+
+
+def sha256_hex(data: bytes) -> str:
+    """First 16 hex chars of SHA-256 over the unframed payload.
+
+    That is the request bytes after ``AXEG`` + u64le, or the response
+    bytes after ``RESP`` + u64le. The kernel hashes those same bytes;
+    the 12-byte header is framing and must not enter the digest.
+    """
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def log_line(line: str):
+    # The proxy injects the tenant key — it must never reach this log.
+    # Redact rather than trust the call sites.
+    if GATEWAY_KEY and GATEWAY_KEY in line:
+        line = line.replace(GATEWAY_KEY, "***")
+    print(line, flush=True)
 
 
 def serve(conn: socket.socket):
@@ -77,6 +123,10 @@ def serve(conn: socket.socket):
             raise ValueError(f"bad frame length {n}")
         payload = read_exact(conn, n)
         resp = forward(payload)
+        log_line(
+            f"[egress-proxy] petition sha256 {sha256_hex(payload)}.. "
+            f"-> {len(resp)}B response sha256 {sha256_hex(resp)}.."
+        )
         conn.sendall(b"RESP" + struct.pack("<Q", len(resp)) + resp)
 
 

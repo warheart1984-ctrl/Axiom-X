@@ -45,37 +45,63 @@ fn main() -> i32 {
     println!("[workload] context: {} bytes", ctx.len());
 
     // 2. ALLOC: build the request through the governed heap.
-    let mut req = String::with_capacity(ctx.len() + 128);
-    req.push_str("POST /v1/summarize HTTP/1.1\r\nHost: llm-gateway\r\n\r\n");
-    req.push_str("Summarize in one line: ");
+    let mut req = String::with_capacity(ctx.len() + 256);
+    req.push_str("POST /v1/chat/complete HTTP/1.1\r\nHost: llm-gateway\r\n\r\n");
+    req.push_str("{\"model\":\"openrouter/gpt-4.1-mini\",\"messages\":[{\"role\":\"user\",\"content\":\"");
     let _ = core::fmt::Write::write_str(&mut req, core::str::from_utf8(&ctx).unwrap_or("?"));
+    req.push_str("\"}],\"params\":{\"max_tokens\":24}}");
     let req = req.into_bytes();
     println!("[workload] request: {} bytes", req.len());
 
-    // 3. NET: petition the outside world (rights-gated, rate-limited,
-    //    ledgered). One petition — well under the token bucket.
+    // 3. NET: the load run. 25 governed petitions unless the boot set
+    //    `axiom.egress.petitions`. Each is rights-gated, rate-limited, and
+    //    ledgered; -EAGAIN means the token bucket spoke, so we sleep a beat
+    //    and retry — the limiter IS the demo.
+    let petitions = match axiom_x_user::boot_cfg(axiom_x_user::nr::BOOTCFG_EGRESS_PETITIONS) {
+        n if n > 0 => n as usize,
+        _ => axiom_x_user::ledger::DEFAULT_EGRESS_PETITIONS as usize,
+    };
+    let mut allowed = 0usize;
+    let mut limited = 0usize;
+    let mut failed = 0usize;
     let mut resp = Vec::with_capacity(2048);
-    resp.resize(2048, 0u8);
-    let n = egress(&req, &mut resp);
-    if n < 0 {
-        println!("[workload] petition refused ({})", n);
-        return 1;
+    for i in 0..petitions {
+        resp.clear();
+        resp.resize(2048, 0u8);
+        let mut tries = 0;
+        let n = loop {
+            let r = egress(&req, &mut resp);
+            if r != -11 || tries >= 6 {
+                break r;
+            }
+            tries += 1;
+            limited += 1;
+            axiom_x_user::sleep_ms(500);
+        };
+        if n < 0 {
+            failed += 1;
+            println!("[workload] petition {} -> {} ({})", i, n, tries);
+        } else {
+            allowed += 1;
+            if i == 0 || i + 1 == petitions || i % 8 == 0 {
+                let head = resp[..n as usize].iter().position(|&b| b == b'\n').unwrap_or(n as usize).min(72);
+                if let Ok(s) = core::str::from_utf8(&resp[..head]) {
+                    println!("[workload] petition {} -> {}: {}", i, n, s);
+                }
+            }
+        }
     }
-    resp.truncate(n as usize);
-    println!("[workload] response: {} bytes", resp.len());
-
-    // 4. WRITE: persist the result through the anchored filesystem.
-    if fs_write(RESULT_FILE, &resp) < 0 {
+    // 4. WRITE: persist a run summary through the anchored filesystem.
+    let summary = alloc::format!(
+        "petitions={} allowed={} rate_limited_retries={} failed={}\n",
+        petitions, allowed, limited, failed
+    );
+    if fs_write(RESULT_FILE, summary.as_bytes()) < 0 {
         println!("[workload] cannot write result");
         return 1;
     }
-
-    let head = resp.iter().position(|&b| b == b'\n').unwrap_or(resp.len()).min(80);
-    if let Ok(s) = core::str::from_utf8(&resp[..head]) {
-        println!("[workload] host: {}", s);
-    }
-    println!("[workload] done: context -> request -> petition -> result");
-    0
+    println!("[workload] done: {}", summary.trim_end());
+    if allowed == 0 { 1 } else { 0 }
 }
 
 entry!(main);

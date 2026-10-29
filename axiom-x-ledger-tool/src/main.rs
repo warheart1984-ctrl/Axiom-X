@@ -197,7 +197,7 @@ fn verify_ledger(image: &str, pubkey: &str, raw: bool) -> Result<(Vec<u8>, u64),
         }
     }
 
-    let (mut boots, mut denies) = (0, 0);
+    let (mut boots, mut denies, mut responses) = (0, 0, 0);
     for seq in 0..c.total {
         let (r, _) = slot(&img, seq).unwrap();
         if r.kind == axiom_x_ledger::kind::BOOT {
@@ -210,11 +210,19 @@ fn verify_ledger(image: &str, pubkey: &str, raw: bool) -> Result<(Vec<u8>, u64),
             };
             println!("  BOOT record #{seq}: boot {}, {when}, resumed {} records", r.arg, r.result);
         }
+        if let Some((len, dig)) = axiom_x_ledger::egress_response_of(&r) {
+            responses += 1;
+            println!(
+                "  EGRESS_RESPONSE #{seq}: pid {} {len}B sha256 {}..",
+                r.pid,
+                &hex(&dig)[..16]
+            );
+        }
         denies += (r.decision == axiom_x_ledger::decision::DENY) as u32;
     }
     println!(
-        "PASS: {} records verified from genesis ({} BOOT records, {} denies); latest and {} archived checkpoints signed by {}",
-        c.total, boots, denies, sb.archived, pubkey
+        "PASS: {} records verified from genesis ({} BOOT records, {} denies, {} egress responses); latest and {} archived checkpoints signed by {}",
+        c.total, boots, denies, responses, sb.archived, pubkey
     );
     Ok((img, c.total))
 }

@@ -11,12 +11,42 @@
 #
 # Usage: ./qemu-boot.sh [seconds]   (default 15)
 # Output: evidence/serial-mb2.log, evidence/qemu-mb2.log (int + cpu_reset trace)
+#
+# Egress knobs (unset = kernel defaults: burst 4, workload 25 petitions,
+# elf-egress 8 probes, 3 self-test rounds). Each round runs both programs,
+# so a live gateway bill is rounds * (petitions + probes that the bucket
+# allows). A 10-petition capture is one round, probes off, burst 10:
+#   EGRESS_PROXY=1 EGRESS_GATEWAY_KEY='<key>' PROXY_UPSTREAM='http://<llm-gateway>' \
+#     EGRESS_BURST=10 EGRESS_PETITIONS=10 EGRESS_PROBES=0 EGRESS_ROUNDS=1 \
+#     sh ./qemu-boot.sh 180
+# EGRESS_STUB=1 starts tools/egress-stub.py and points the proxy at it
+# (no gateway key). Scratch disks: LEDGER_DISK / FS_DISK / LEDGER_KEY.
 set -eu
 cd "$(dirname "$0")"
 SECS="${1:-15}"
 ulimit -c 0
 mkdir -p evidence/tmp evidence/iso/boot/grub
 export TMPDIR="$PWD/evidence/tmp"
+
+append_cmd() {
+    if [ -n "${KERNEL_CMDLINE:-}" ]; then
+        KERNEL_CMDLINE="$KERNEL_CMDLINE $1"
+    else
+        KERNEL_CMDLINE="$1"
+    fi
+}
+if [ -n "${EGRESS_BURST:-}" ]; then
+    append_cmd "axiom.egress.burst=${EGRESS_BURST}"
+fi
+if [ -n "${EGRESS_PETITIONS:-}" ]; then
+    append_cmd "axiom.egress.petitions=${EGRESS_PETITIONS}"
+fi
+if [ -n "${EGRESS_PROBES:-}" ]; then
+    append_cmd "axiom.egress.probes=${EGRESS_PROBES}"
+fi
+if [ -n "${EGRESS_ROUNDS:-}" ]; then
+    append_cmd "axiom.rounds=${EGRESS_ROUNDS}"
+fi
 
 cp target/x86_64-unknown-none/debug/kernel evidence/iso/boot/kernel.elf
 
@@ -126,11 +156,43 @@ if [ -f evidence/serial-mb2.log ]; then
     mv evidence/serial-mb2.log "evidence/serial-mb2-$(date +%Y%m%d-%H%M%S).log"
 fi
 
+# Local echo upstream: real response bytes, no gateway and no API key.
+STUB_PID=""
+if [ "${EGRESS_STUB:-0}" = 1 ]; then
+    STUB_PORT="${EGRESS_STUB_PORT:-8081}"
+    python3 tools/egress-stub.py "$STUB_PORT" >evidence/tmp/egress-stub.log 2>&1 &
+    STUB_PID=$!
+    PROXY_UPSTREAM="http://127.0.0.1:${STUB_PORT}"
+    EGRESS_PROXY=1
+    sleep 0.3
+fi
+
+# Egress proxy: when EGRESS_PROXY=1 (or EGRESS_GATEWAY_KEY is set), run the
+# host proxy for this boot and keep its log as committed evidence, so the
+# COM2 side of a petition is never lost the way serial was.
+PROXY_LOG=""
+if [ "${EGRESS_PROXY:-0}" = 1 ] || [ -n "${EGRESS_GATEWAY_KEY:-}" ]; then
+    PROXY_LOG="evidence/proxy-$(date +%Y%m%d-%H%M%S).log"
+    EGRESS_GATEWAY_KEY="${EGRESS_GATEWAY_KEY:-}" python3 tools/egress-proxy.py "${PROXY_UPSTREAM:-http://127.0.0.1:8080}" \
+        > "$PROXY_LOG" 2>&1 &
+    PROXY_PID=$!
+    sleep 1
+fi
+
 timeout "$SECS" qemu-system-x86_64 -cdrom "$ISO" -boot d \
     -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
     -drive "file=$FS_DISK,format=raw,if=ide,index=1,media=disk,cache=writethrough" \
     -serial file:evidence/serial-mb2.log -serial tcp:127.0.0.1:4445,server,nowait -display none -no-reboot \
     -d int,cpu_reset -D evidence/qemu-mb2.log -m 256M || true
+
+if [ -n "$PROXY_LOG" ]; then
+    kill "$PROXY_PID" 2>/dev/null || true
+    echo "=== proxy ($PROXY_LOG) ==="
+    tail -20 "$PROXY_LOG"
+fi
+if [ -n "$STUB_PID" ]; then
+    kill "$STUB_PID" 2>/dev/null || true
+fi
 
 echo "=== serial ==="
 tr -d '\r' < evidence/serial-mb2.log

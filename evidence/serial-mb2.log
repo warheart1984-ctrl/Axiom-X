@@ -1,20 +1,20 @@
 YAXIOM-X BOOT
 Parsing multiboot2 info...
-  Kernel: 0x100000 - 0x2f1e08
+  Kernel: 0x100000 - 0x2f2e08
   Memory regions: 7
 Initializing kernel frame allocator...
   Frame allocator will be initialized by kernel
 Initializing boot allocator...
   Boot modules: 16
 Setting up page tables...
-  PML4 at 0xb9a000
+  PML4 at 0xb9c000
 Initializing early heap...
 Initializing CPU features...
 Initializing architecture...
   PS/2: present true, config 0x71 -> 0x61, enable-scanning reply Some(250), 0 stale bytes flushed
 Calibrating clock (RTC + TSC, 1-2 s)...
-  RTC: 2026-10-28 22:12:14 (no time zone)  TSC: 4006.438 MHz
-  Tick: local APIC timer at 100 Hz (APIC base 0xfee00000, 62751360 counts/s, 627513 per tick); PIT IRQ0 masked
+  RTC: 2026-10-29 01:47:14 (no time zone)  TSC: 3998.343 MHz
+  Tick: local APIC timer at 100 Hz (APIC base 0xfee00000, 62722600 counts/s, 627226 per tick); PIT IRQ0 masked
 Initializing movie subsystem...
 Creating process table...
   ProcessTable: 546840 bytes
@@ -23,164 +23,167 @@ Creating init process...
   Init PID: 1 (kernel stack top 0xffff800008011000)
 Starting scheduler...
 PID 1 (init) running on its own stack; interrupts enabled
-[clock] tick check (local APIC timer): 100 ticks in 1.000 s (TSC) = 99.9 Hz, expected 100 Hz
+[clock] tick check (local APIC timer): 100 ticks in 1.002 s (TSC) = 99.7 Hz, expected 100 Hz
 [ledger] signing key provisioned; public key 5b82c607bffbf55da01a58b242584edb208cb412e030244ddfc7b7c579705f8a
-[ledger] recovery: newer superblock copy damaged; using the older one
-[ledger] REFUSED disk ledger: rollback evidence: archive holds a newer signed checkpoint than the superblock; disk left untouched, evidence is memory-only
-[fs] mounted AXFS: 2 files, root ca336caf7381dbf3.., no ledger anchor yet (first use); read-write
+[ledger] blank disk (8192 sectors) formatted: new chain from genesis (boot 1, signed checkpoint)
+[fs] blank disk (32768 sectors) formatted as AXFS; root 9f1dcbc35c350d60.. anchored in ledger
 [kernel] === round 1: frames in use 283 ===
-[kernel] spawned 'hello' as pid 2: 171 bytes embedded, PML4 0xcb5000
+[kernel] spawned 'hello' as pid 2: 171 bytes embedded, PML4 0xcb7000
 hello from ring 3
 [syscall] pid=2 write(nr=1, a0=0x1) -> 18
+[kernel] spawned 'probe' as pid 3: 27 bytes embedded, PML4 0xccd000
+[kernel] pid=3 killed: page fault in ring 3 at rip=0x800000000a (0xffff800000100000)
+[kernel] pid 3 (parent 0) killed by signal 11
 [syscall] pid=2 write(nr=1, a0=0x1) -> -14
-[kernel] spawned 'probe' as pid 3: 27 bytes embedded, PML4 0xccb000
 ring 3: kernel pointer refused with -EFAULT
 [syscall] pid=2 write(nr=1, a0=0x1) -> 44
 [syscall] pid=2 exit(nr=60, a0=0x0) -> 0
 [kernel] pid 2 (parent 0) exited with code 0
-[kernel] spawned 'spin-A' as pid 4: 74 bytes embedded, PML4 0xce1000
-[kernel] pid=3 killed: page fault in ring 3 at rip=0x800000000a (0xffff800000100000)
-[kernel] pid 3 (parent 0) killed by signal 11
-[kernel] spawned 'spin-B' as pid 5: 74 bytes embedded, PML4 0xcf7000
+[kernel] spawned 'spin-A' as pid 4: 74 bytes embedded, PML4 0xce3000
+[kernel] spawned 'spin-B' as pid 5: 74 bytes embedded, PML4 0xcf9000
 [user A] tick
 [syscall] pid=4 write(nr=1, a0=0x1) -> 14
 [user B] tick
 [syscall] pid=5 write(nr=1, a0=0x1) -> 14
 [user A] tick
 [syscall] pid=4 write(nr=1, a0=0x1) -> 14
-[user B] tick
-[syscall] pid=5 write(nr=1, a0=0x1) -> 14
-[user A] tick
-[syscall] pid=4 write(nr=1, a0=0x1) -> 14
-[user B] tick
-[syscall] pid=5 write(nr=1, a0=0x1) -> 14
-[user A] tick
-[syscall] pid=4 write(nr=1, a0=0x1) -> 14
-[user B] tick
-[syscall] pid=5 write(nr=1, a0=0x1) -> 14
-[user A] tick
-[syscall] pid=4 write(nr=1, a0=0x1) -> 14
-[syscall] pid=4 exit(nr=60, a0=0x0) -> 0
-[kernel] pid 4 (parent 0) exited with code 0
-[user B] tick
-[syscall] pid=5 write(nr=1, a0=0x1) -> 14
-[syscall] pid=5 exit(nr=60, a0=0x0) -> 0
-[kernel] pid 5 (parent 0) exited with code 0
-[kernel] loaded ELF 'elf-init' as pid 6 (parent 0): 20952 bytes, PML4 0xd0d000
 [syscall] pid=6 getpid(nr=39, a0=0x0) -> 6
 [init] user-space init running as pid 6
 [syscall] pid=6 write(nr=1, a0=0x1) -> 40
-[kernel] loaded ELF 'elf-hello' as pid 7 (parent 6): 16880 bytes, PML4 0xd2b000
+[kernel] loaded ELF 'elf-init' as pid 6 (parent 0): 20952 bytes, PML4 0xd0f000
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[kernel] loaded ELF 'elf-hello' as pid 7 (parent 6): 16880 bytes, PML4 0xd2d000
 [syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034cf) -> 7
 [init] spawn elf-hello rights 0x80 -> pid 7
 [syscall] pid=6 write(nr=1, a0=0x1) -> 44
-[kernel] loaded ELF 'elf-heap' as pid 8 (parent 6): 16800 bytes, PML4 0xd49000
-[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034e0) -> 8
+[kernel] loaded ELF 'elf-heap' as pid 8 (parent 6): 16800 bytes, PML4 0xd4b000
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
 [syscall] pid=8 getpid(nr=39, a0=0x0) -> 8
-[syscall] pid=7 getpid(nr=39, a0=0x0) -> 7
-[elf-hello] pid 7: Rust ELF running in ring 3
-[syscall] pid=7 write(nr=1, a0=0x1) -> 46
-[elf-hello] .data initialized: true, .bss zeroed: true
-[syscall] pid=7 write(nr=1, a0=0x1) -> 55
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034e0) -> 8
 [init] spawn elf-heap rights 0xa0 -> pid 8
 [syscall] pid=6 write(nr=1, a0=0x1) -> 43
-[elf-hello] back after sched_yield, exiting
-[syscall] pid=7 write(nr=1, a0=0x1) -> 44
-[syscall] pid=7 exit(nr=60, a0=0x0) -> 0
-[kernel] pid 7 (parent 6) exited with code 0
-[elf-heap] pid 8: AX_MMAP self-test
-[syscall] pid=8 write(nr=1, a0=0x1) -> 36
-[syscall] pid=8 ax_mmap(nr=536, a0=0x3000) -> 554050781184
-[syscall] pid=8 ax_mmap(nr=536, a0=0x2000) -> 554050793472
-[elf-heap] base 0x8100000000, growth disjoint: true, zeroed: true, rw: true
-[syscall] pid=8 write(nr=1, a0=0x1) -> 76
-[syscall] pid=8 exit(nr=60, a0=0x0) -> 0
-[kernel] pid 8 (parent 6) exited with code 0
-[kernel] loaded ELF 'elf-agent' as pid 9 (parent 6): 25304 bytes, PML4 0xd6d000
+[kernel] loaded ELF 'elf-agent' as pid 9 (parent 6): 25304 bytes, PML4 0xd68000
+[syscall] pid=7 getpid(nr=39, a0=0x0) -> 7
 [syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034f0) -> 9
 [init] spawn elf-agent rights 0xa0 -> pid 9
 [syscall] pid=6 write(nr=1, a0=0x1) -> 44
-[kernel] loaded ELF 'elf-egress' as pid 10 (parent 6): 16800 bytes, PML4 0xd8c000
+[elf-heap] pid 8: AX_MMAP self-test
+[syscall] pid=8 write(nr=1, a0=0x1) -> 36
+[kernel] loaded ELF 'elf-egress' as pid 10 (parent 6): 16800 bytes, PML4 0xd87000
+[elf-hello] pid 7: Rust ELF running in ring 3
+[syscall] pid=7 write(nr=1, a0=0x1) -> 46
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[syscall] pid=10 getpid(nr=39, a0=0x0) -> 10
+[syscall] pid=9 getpid(nr=39, a0=0x0) -> 9
 [syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034f9) -> 10
+[syscall] pid=8 ax_mmap(nr=536, a0=0x3000) -> 554050781184
+[elf-hello] .data initialized: true, .bss zeroed: true
+[syscall] pid=7 write(nr=1, a0=0x1) -> 55
 [init] spawn elf-egress rights 0x10080 -> pid 10
 [syscall] pid=6 write(nr=1, a0=0x1) -> 49
-[kernel] loaded ELF 'elf-workload' as pid 11 (parent 6): 21016 bytes, PML4 0xda9000
-[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003503) -> 11
-[syscall] pid=10 getpid(nr=39, a0=0x0) -> 10
-[syscall] pid=11 getpid(nr=39, a0=0x0) -> 11
-[init] spawn elf-workload rights 0x100a6 -> pid 11
-[syscall] pid=6 write(nr=1, a0=0x1) -> 51
-[kernel] loaded ELF 'elf-fast' as pid 12 (parent 6): 16800 bytes, PML4 0xdc7000
-[syscall] pid=9 getpid(nr=39, a0=0x0) -> 9
-[syscall] pid=12 getpid(nr=39, a0=0x0) -> 12
 [syscall] pid=9 ax_mmap(nr=536, a0=0x10000) -> 554050781184
-[syscall] pid=12 nanosleep(nr=35, a0=0xa) -> 0
-[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034e8) -> 12
+[kernel] loaded ELF 'elf-workload' as pid 11 (parent 6): 21184 bytes, PML4 0xdbb000
+[elf-hello] back after sched_yield, exiting
+[syscall] pid=7 write(nr=1, a0=0x1) -> 44
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003503) -> 11
 [elf-egress] pid 10: governed egress petition
 [syscall] pid=10 write(nr=1, a0=0x1) -> 46
+[syscall] pid=8 ax_mmap(nr=536, a0=0x2000) -> 554050793472
+[init] spawn elf-workload rights 0x100a6 -> pid 11
+[syscall] pid=6 write(nr=1, a0=0x1) -> 51
+[egress] pid 10 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=7 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 7 (parent 6) exited with code 0
+[kernel] loaded ELF 'elf-fast' as pid 12 (parent 6): 16800 bytes, PML4 0xddb000
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034e8) -> 12
+[elf-agent] pid 9: heap-backed collections
+[syscall] pid=9 write(nr=1, a0=0x1) -> 43
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[syscall] pid=11 getpid(nr=39, a0=0x0) -> 11
+[elf-heap] base 0x8100000000, growth disjoint: true, zeroed: true, rw: true
+[syscall] pid=8 write(nr=1, a0=0x1) -> 76
 [init] spawn elf-fast rights 0x80 -> pid 12
 [syscall] pid=6 write(nr=1, a0=0x1) -> 44
 [workload] pid 11: governed agent run
 [syscall] pid=11 write(nr=1, a0=0x1) -> 38
-[elf-agent] pid 9: heap-backed collections
-[syscall] pid=9 write(nr=1, a0=0x1) -> 43
-[elf-fast] pid 12 woke 1/5 at ~100 ms (sleep -> 0)
-[syscall] pid=12 write(nr=1, a0=0x1) -> 51
-[kernel] loaded ELF 'elf-slow' as pid 13 (parent 6): 16800 bytes, PML4 0xdf6000
+[syscall] pid=8 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 8 (parent 6) exited with code 0
+[syscall] pid=12 getpid(nr=39, a0=0x0) -> 12
+[kernel] loaded ELF 'elf-slow' as pid 13 (parent 6): 16800 bytes, PML4 0xdf8000
+[syscall] pid=11 ax_mmap(nr=536, a0=0x10000) -> 554050781184
 [syscall] pid=9 ax_mmap(nr=536, a0=0x20010) -> 554050846720
+[user B] tick
+[syscall] pid=5 write(nr=1, a0=0x1) -> 14
+[syscall] pid=13 getpid(nr=39, a0=0x0) -> 13
+[syscall] pid=5 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 5 (parent 0) exited with code 0
 [syscall] pid=12 nanosleep(nr=35, a0=0xa) -> 0
-[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034d8) -> 13
 [elf-agent] grow: true, reuse: true, big(128KiB): true
 [syscall] pid=9 write(nr=1, a0=0x1) -> 55
-[syscall] pid=13 getpid(nr=39, a0=0x0) -> 13
+[syscall] pid=13 nanosleep(nr=35, a0=0x19) -> 0
 [syscall] pid=9 exit(nr=60, a0=0x0) -> 0
 [kernel] pid 9 (parent 6) exited with code 0
-[syscall] pid=13 nanosleep(nr=35, a0=0x19) -> 0
-[elf-fast] pid 12 woke 2/5 at ~200 ms (sleep -> 0)
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034d8) -> 13
+[elf-fast] pid 12 woke 1/5 at ~100 ms (sleep -> 0)
 [syscall] pid=12 write(nr=1, a0=0x1) -> 51
+[syscall] pid=12 nanosleep(nr=35, a0=0xa) -> 0
 [init] spawn elf-slow rights 0x80 -> pid 13
 [syscall] pid=6 write(nr=1, a0=0x1) -> 44
-[syscall] pid=11 ax_mmap(nr=536, a0=0x10000) -> 554050781184
-[syscall] pid=12 nanosleep(nr=35, a0=0xa) -> 0
-[kernel] loaded ELF 'elf-crash' as pid 14 (parent 6): 16800 bytes, PML4 0xe46000
+[kernel] loaded ELF 'elf-crash' as pid 14 (parent 6): 16800 bytes, PML4 0xe48000
 [elf-slow] pid 13 woke 1/2 at ~250 ms (sleep -> 0)
 [syscall] pid=13 write(nr=1, a0=0x1) -> 51
-[syscall] pid=6 ax_spawn_module(nr=520, a0=0x800000350f) -> 14
 [syscall] pid=14 getpid(nr=39, a0=0x0) -> 14
+[elf-fast] pid 12 woke 2/5 at ~200 ms (sleep -> 0)
+[syscall] pid=12 write(nr=1, a0=0x1) -> 51
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x800000350f) -> 14
+[syscall] pid=12 nanosleep(nr=35, a0=0xa) -> 0
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
 [syscall] pid=13 nanosleep(nr=35, a0=0x19) -> 0
 [init] spawn elf-crash rights 0x80 -> pid 14
 [syscall] pid=6 write(nr=1, a0=0x1) -> 45
-[kernel] loaded ELF 'elf-noperm' as pid 15 (parent 6): 16800 bytes, PML4 0xe63000
+[syscall] pid=11 ax_fs_read(nr=531, a0=0x8000003660) -> -2
+[elf-fast] pid 12 woke 3/5 at ~300 ms (sleep -> 0)
+[syscall] pid=12 write(nr=1, a0=0x1) -> 51
+[workload] no context file, planting (-2)
+[syscall] pid=11 write(nr=1, a0=0x1) -> 42
+[syscall] pid=12 nanosleep(nr=35, a0=0xa) -> 0
 [elf-crash] pid 14 reading a kernel address
 [syscall] pid=14 write(nr=1, a0=0x1) -> 44
+[elf-slow] pid 13 woke 2/2 at ~500 ms (sleep -> 0)
+[syscall] pid=13 write(nr=1, a0=0x1) -> 51
+[kernel] pid=14 killed: page fault in ring 3 at rip=0x800000119b (0xffff800000100000)
+[kernel] pid 14 (parent 6) killed by signal 11
+[syscall] pid=13 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 13 (parent 6) exited with code 0
+[kernel] loaded ELF 'elf-noperm' as pid 15 (parent 6): 16800 bytes, PML4 0xe65000
 [syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003518) -> 15
-[elf-fast] pid 12 woke 3/5 at ~300 ms (sleep -> 0)
+[elf-fast] pid 12 woke 4/5 at ~400 ms (sleep -> 0)
 [syscall] pid=12 write(nr=1, a0=0x1) -> 51
 [init] spawn elf-noperm rights 0x0 -> pid 15
 [syscall] pid=6 write(nr=1, a0=0x1) -> 45
 [syscall] pid=12 nanosleep(nr=35, a0=0xa) -> 0
-[kernel] ELF 'elf-bad-wx' failed to load: W^X violation: segment is both writable and executable
-[elf-slow] pid 13 woke 2/2 at ~500 ms (sleep -> 0)
-[syscall] pid=13 write(nr=1, a0=0x1) -> 51
-[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003522) -> -8
+[user A] tick
+[syscall] pid=4 write(nr=1, a0=0x1) -> 14
+[syscall] pid=4 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 4 (parent 0) exited with code 0
 [syscall] pid=15 write(nr=1, a0=0x1) -> -1
-[syscall] pid=11 ax_fs_read(nr=531, a0=0x800000345a) -> 61
-[elf-fast] pid 12 woke 4/5 at ~400 ms (sleep -> 0)
+[elf-fast] pid 12 woke 5/5 at ~500 ms (sleep -> 0)
 [syscall] pid=12 write(nr=1, a0=0x1) -> 51
-[syscall] pid=13 exit(nr=60, a0=0x0) -> 0
-[kernel] pid 13 (parent 6) exited with code 0
+[syscall] pid=15 ax_spawn_module(nr=520, a0=0x8000002210) -> -1
+[syscall] pid=12 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 12 (parent 6) exited with code 0
+[kernel] ELF 'elf-bad-wx' failed to load: W^X violation: segment is both writable and executable
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x8000003522) -> -8
 [init] spawn elf-bad-wx rights 0x80 -> -8 (ENOEXEC)
 [syscall] pid=6 write(nr=1, a0=0x1) -> 52
-[workload] context: 61 bytes
-[syscall] pid=11 write(nr=1, a0=0x1) -> 29
 [syscall] pid=6 ax_spawn_module(nr=520, a0=0x800000352c) -> -2
-[syscall] pid=15 ax_spawn_module(nr=520, a0=0x8000002210) -> -1
-[workload] request: 134 bytes
-[syscall] pid=11 write(nr=1, a0=0x1) -> 30
 [init] spawn no-such-program rights 0x80 -> -2 (ENOENT)
 [syscall] pid=6 write(nr=1, a0=0x1) -> 56
-[kernel] pid=14 killed: page fault in ring 3 at rip=0x800000119b (0xffff800000100000)
-[kernel] pid 14 (parent 6) killed by signal 11
 [syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000034cf) -> -1
 [init] spawn elf-hello rights 0x2000080 -> -1 (EPERM)
 [syscall] pid=6 write(nr=1, a0=0x1) -> 54
@@ -188,57 +191,875 @@ ring 3: kernel pointer refused with -EFAULT
 [syscall] pid=6 wait4(nr=61, a0=0x7) -> 7
 [init] reaped pid 7: exited with code 0
 [syscall] pid=6 write(nr=1, a0=0x1) -> 40
-[syscall] pid=15 ax_spawn_module(nr=520, a0=0x8000002219) -> -1
 [kernel] release pid 8: aspace 20 + kstack 16 frames (owned 0 / 16384)
 [syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 8
-[syscall] pid=15 ax_fs_list(nr=530, a0=0x803ffff8c8) -> -1
 [init] reaped pid 8: exited with code 0
 [syscall] pid=6 write(nr=1, a0=0x1) -> 40
-[syscall] pid=15 ax_fs_read(nr=531, a0=0x8000002223) -> -1
 [kernel] release pid 9: aspace 66 + kstack 16 frames (owned 0 / 16384)
 [syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 9
 [init] reaped pid 9: exited with code 0
 [syscall] pid=6 write(nr=1, a0=0x1) -> 40
+[kernel] release pid 12: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 12
+[init] reaped pid 12: exited with code 0
+[syscall] pid=6 write(nr=1, a0=0x1) -> 41
 [kernel] release pid 13: aspace 13 + kstack 16 frames (owned 0 / 16384)
 [syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 13
-[syscall] pid=15 ax_fs_write(nr=532, a0=0x800000223f) -> -1
 [init] reaped pid 13: exited with code 0
 [syscall] pid=6 write(nr=1, a0=0x1) -> 41
 [kernel] release pid 14: aspace 13 + kstack 16 frames (owned 0 / 16384)
 [syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 14
-[syscall] pid=15 ax_fs_delete(nr=533, a0=0x8000002223) -> -1
 [init] reaped pid 14: killed by signal 11
 [syscall] pid=6 write(nr=1, a0=0x1) -> 42
-[syscall] pid=12 nanosleep(nr=35, a0=0xa) -> 0
+[syscall] pid=15 ax_spawn_module(nr=520, a0=0x8000002219) -> -1
+[syscall] pid=15 ax_fs_list(nr=530, a0=0x803ffff8c8) -> -1
+[syscall] pid=15 ax_fs_read(nr=531, a0=0x8000002223) -> -1
+[syscall] pid=15 ax_fs_write(nr=532, a0=0x800000223f) -> -1
+[syscall] pid=15 ax_fs_delete(nr=533, a0=0x8000002223) -> -1
 [syscall] pid=15 exit(nr=60, a0=0x0) -> 0
 [kernel] pid 15 (parent 6) exited with code 0
 [kernel] release pid 15: aspace 13 + kstack 16 frames (owned 0 / 16384)
 [syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 15
 [init] reaped pid 15: exited with code 0
 [syscall] pid=6 write(nr=1, a0=0x1) -> 41
-[elf-fast] pid 12 woke 5/5 at ~500 ms (sleep -> 0)
-[syscall] pid=12 write(nr=1, a0=0x1) -> 51
-[syscall] pid=12 exit(nr=60, a0=0x0) -> 0
-[kernel] pid 12 (parent 6) exited with code 0
-[kernel] release pid 12: aspace 13 + kstack 16 frames (owned 0 / 16384)
-[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 12
-[init] reaped pid 12: exited with code 0
+[syscall] pid=10 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 0 -> 420 bytes
+[syscall] pid=10 write(nr=1, a0=0x1) -> 37
+[egress] pid 10 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=11 ax_fs_write(nr=532, a0=0x8000003660) -> 0
+[workload] context: 61 bytes
+[syscall] pid=11 write(nr=1, a0=0x1) -> 29
+[workload] request: 219 bytes
+[syscall] pid=11 write(nr=1, a0=0x1) -> 30
+[syscall] pid=10 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 1 -> 420 bytes
+[syscall] pid=10 write(nr=1, a0=0x1) -> 37
+[egress] pid 10 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=10 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 2 -> 420 bytes
+[syscall] pid=10 write(nr=1, a0=0x1) -> 37
+[egress] pid 10 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=10 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 3 -> 420 bytes
+[syscall] pid=10 write(nr=1, a0=0x1) -> 37
+[egress] pid 10 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=10 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 4 -> 420 bytes
+[syscall] pid=10 write(nr=1, a0=0x1) -> 37
+[egress] pid 10 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=10 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 5 -> 420 bytes
+[syscall] pid=10 write(nr=1, a0=0x1) -> 37
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 554
+[workload] petition 0 -> 554: {"content":"The phrase **\"Axiom-X constitutional compute: governed, evi
+[syscall] pid=11 write(nr=1, a0=0x1) -> 103
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 543
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 566
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 553
+[egress] pid 10 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=10 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 6 -> 420 bytes
+[syscall] pid=10 write(nr=1, a0=0x1) -> 37
+[egress] pid 10 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=10 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 7 -> 420 bytes
+[syscall] pid=10 write(nr=1, a0=0x1) -> 37
+[elf-egress] 8 allowed, 0 rate-limited
+[syscall] pid=10 write(nr=1, a0=0x1) -> 39
+[elf-egress] host says: {"data":[{"aliases":["gpt-4.1-mini","smart-cheap"],"created":1793147832,"display
+[syscall] pid=10 write(nr=1, a0=0x1) -> 105
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=10 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 10 (parent 6) exited with code 0
+[kernel] release pid 10: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 10
+[init] reaped pid 10: exited with code 0
 [syscall] pid=6 write(nr=1, a0=0x1) -> 41
-[syscall] pid=10 ax_egress(nr=537, a0=0x80000023d5) -> -5
-[elf-egress] petition 0 -> refused (-5)
-[syscall] pid=10 write(nr=1, a0=0x1) -> 40
-[syscall] pid=11 ax_egress(nr=537, a0=0x8100000420) -> -5
-[workload] petition refused (-5)
-[syscall] pid=11 write(nr=1, a0=0x1) -> 33
-[syscall] pid=11 exit(nr=60, a0=0x1) -> 0
-[kernel] pid 11 (parent 6) exited with code 1
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 219
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 550
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 556
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 549
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 546
+[workload] petition 8 -> 546: {"content":"It seems like you're referring to a concept or framework cal
+[syscall] pid=11 write(nr=1, a0=0x1) -> 103
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 551
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 548
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 545
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 561
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 561
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 544
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 553
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 567
+[workload] petition 16 -> 567: {"content":"Your phrase \"Axiom-X constitutional compute: governed, evid
+[syscall] pid=11 write(nr=1, a0=0x1) -> 104
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 540
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 219
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 549
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 544
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 554
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 560
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 556
+[egress] pid 11 petition sha256 198f50b381283918..
+[syscall] pid=11 ax_egress(nr=537, a0=0x81000002d0) -> 543
+[workload] petition 24 -> 543: {"content":"The phrase **\"Axiom-X constitutional compute: governed, evi
+[syscall] pid=11 write(nr=1, a0=0x1) -> 104
+[syscall] pid=11 ax_fs_write(nr=532, a0=0x8000003758) -> 0
+[workload] done: petitions=25 allowed=25 rate_limited_retries=0 failed=0
+[syscall] pid=11 write(nr=1, a0=0x1) -> 73
+[syscall] pid=11 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 11 (parent 6) exited with code 0
 [kernel] release pid 11: aspace 32 + kstack 16 frames (owned 0 / 16384)
 [syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> 11
-[init] reaped pid 11: exited with code 1
+[init] reaped pid 11: exited with code 0
 [syscall] pid=6 write(nr=1, a0=0x1) -> 41
-[syscall] pid=10 ax_egress(nr=537, a0=0x80000023d5) -> -5
-[elf-egress] petition 1 -> refused (-5)
-[syscall] pid=10 write(nr=1, a0=0x1) -> 40
-[syscall] pid=10 ax_egress(nr=537, a0=0x80000023d5) -> -5
-[elf-egress] petition 2 -> refused (-5)
-[syscall] pid=10 write(nr=1, a0=0x1) -> 40
+[kernel] loaded ELF 'elf-audit' as pid 16 (parent 6): 25048 bytes, PML4 0xdd8000
+[syscall] pid=16 getpid(nr=39, a0=0x0) -> 16
+[syscall] pid=6 ax_spawn_module(nr=520, a0=0x80000036c0) -> 16
+[audit] pid 16: verifying ledger records 0..202 (of 202)
+[syscall] pid=16 write(nr=1, a0=0x1) -> 57
+[audit] chain intact: 202 records, head fb27a55a4f2cffec... (denies 10, faults 2, creates 14, reaps 9)
+[syscall] pid=16 write(nr=1, a0=0x1) -> 103
+[audit] forged record 101 detected: yes
+[syscall] pid=16 write(nr=1, a0=0x1) -> 40
+[audit] ledger audit: PASS
+[syscall] pid=16 write(nr=1, a0=0x1) -> 27
+[syscall] pid=16 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 16 (parent 6) exited with code 0
+[kernel] release pid 16: aspace 15 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=6 wait4(nr=61, a0=0x10) -> 16
+[syscall] pid=6 wait4(nr=61, a0=0xffffffffffffffff) -> -10
+[init] all children reaped: 9/9 (exit 0: 8, signaled: 1); expected spawn failures: 3/3; audit ok: true; wait(-1) now -> Err(-10)
+[syscall] pid=6 write(nr=1, a0=0x1) -> 129
+[init] process-lifecycle check: PASS
+[syscall] pid=6 write(nr=1, a0=0x1) -> 37
+[syscall] pid=6 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 6 (parent 0) exited with code 0
+[kernel] release pid 2: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 3: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 4: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 5: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 6: aspace 14 + kstack 16 frames (owned 0 / 16384)
+[ledger] persisted 256 new records to disk
+[kernel] ledger: 527 records, head 8f7bd21ca558b2c1...
+[kernel] round 1: kernel started 5, kernel reaped 5 (118 frames); 1 process records left; frames in use 283 -> 283
+[kernel] === round 2: frames in use 283 ===
+[kernel] spawned 'hello' as pid 17: 171 bytes embedded, PML4 0xd2c000
+hello from ring 3
+[syscall] pid=17 write(nr=1, a0=0x1) -> 18
+[kernel] spawned 'probe' as pid 18: 27 bytes embedded, PML4 0xd1b000
+[kernel] pid=18 killed: page fault in ring 3 at rip=0x800000000a (0xffff800000100000)
+[kernel] pid 18 (parent 0) killed by signal 11
+[syscall] pid=17 write(nr=1, a0=0x1) -> -14
+ring 3: kernel pointer refused with -EFAULT
+[syscall] pid=17 write(nr=1, a0=0x1) -> 44
+[syscall] pid=17 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 17 (parent 0) exited with code 0
+[kernel] spawned 'spin-A' as pid 19: 74 bytes embedded, PML4 0xd00000
+[kernel] spawned 'spin-B' as pid 20: 74 bytes embedded, PML4 0xcea000
+[kernel] loaded ELF 'elf-init' as pid 21 (parent 0): 20952 bytes, PML4 0xcd4000
+[syscall] pid=21 getpid(nr=39, a0=0x0) -> 21
+[init] user-space init running as pid 21
+[syscall] pid=21 write(nr=1, a0=0x1) -> 41
+[user B] tick
+[syscall] pid=20 write(nr=1, a0=0x1) -> 14
+[kernel] loaded ELF 'elf-hello' as pid 22 (parent 21): 16880 bytes, PML4 0xe1c000
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x80000034cf) -> 22
+[syscall] pid=22 getpid(nr=39, a0=0x0) -> 22
+[init] spawn elf-hello rights 0x80 -> pid 22
+[syscall] pid=21 write(nr=1, a0=0x1) -> 45
+[user A] tick
+[syscall] pid=19 write(nr=1, a0=0x1) -> 14
+[kernel] loaded ELF 'elf-heap' as pid 23 (parent 21): 16800 bytes, PML4 0xdd7000
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x80000034e0) -> 23
+[elf-hello] pid 22: Rust ELF running in ring 3
+[syscall] pid=22 write(nr=1, a0=0x1) -> 47
+[init] spawn elf-heap rights 0xa0 -> pid 23
+[syscall] pid=21 write(nr=1, a0=0x1) -> 44
+[elf-hello] .data initialized: true, .bss zeroed: true
+[syscall] pid=22 write(nr=1, a0=0x1) -> 55
+[kernel] loaded ELF 'elf-agent' as pid 24 (parent 21): 25304 bytes, PML4 0xd98000
+[user B] tick
+[syscall] pid=20 write(nr=1, a0=0x1) -> 14
+[syscall] pid=24 getpid(nr=39, a0=0x0) -> 24
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x80000034f0) -> 24
+[syscall] pid=23 getpid(nr=39, a0=0x0) -> 23
+[init] spawn elf-agent rights 0xa0 -> pid 24
+[syscall] pid=21 write(nr=1, a0=0x1) -> 45
+[kernel] loaded ELF 'elf-egress' as pid 25 (parent 21): 16800 bytes, PML4 0xe74000
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x80000034f9) -> 25
+[elf-hello] back after sched_yield, exiting
+[syscall] pid=22 write(nr=1, a0=0x1) -> 44
+[init] spawn elf-egress rights 0x10080 -> pid 25
+[syscall] pid=21 write(nr=1, a0=0x1) -> 49
+[elf-heap] pid 23: AX_MMAP self-test
+[syscall] pid=23 write(nr=1, a0=0x1) -> 37
+[kernel] loaded ELF 'elf-workload' as pid 26 (parent 21): 21184 bytes, PML4 0xe57000
+[syscall] pid=23 ax_mmap(nr=536, a0=0x3000) -> 554050781184
+[user B] tick
+[syscall] pid=20 write(nr=1, a0=0x1) -> 14
+[syscall] pid=26 getpid(nr=39, a0=0x0) -> 26
+[syscall] pid=24 ax_mmap(nr=536, a0=0x10000) -> 554050781184
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x8000003503) -> 26
+[syscall] pid=25 getpid(nr=39, a0=0x0) -> 25
+[syscall] pid=23 ax_mmap(nr=536, a0=0x2000) -> 554050793472
+[init] spawn elf-workload rights 0x100a6 -> pid 26
+[syscall] pid=21 write(nr=1, a0=0x1) -> 51
+[elf-agent] pid 24: heap-backed collections
+[syscall] pid=24 write(nr=1, a0=0x1) -> 44
+[syscall] pid=22 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 22 (parent 21) exited with code 0
+[workload] pid 26: governed agent run
+[syscall] pid=26 write(nr=1, a0=0x1) -> 38
+[elf-heap] base 0x8100000000, growth disjoint: true, zeroed: true, rw: true
+[syscall] pid=23 write(nr=1, a0=0x1) -> 76
+[kernel] loaded ELF 'elf-fast' as pid 27 (parent 21): 16800 bytes, PML4 0xded000
+[elf-egress] pid 25: governed egress petition
+[syscall] pid=25 write(nr=1, a0=0x1) -> 46
+[syscall] pid=23 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 23 (parent 21) exited with code 0
+[syscall] pid=27 getpid(nr=39, a0=0x0) -> 27
+[user A] tick
+[syscall] pid=19 write(nr=1, a0=0x1) -> 14
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x80000034e8) -> 27
+[egress] pid 25 petition sha256 d1bba6bee60f1d77..
+[init] spawn elf-fast rights 0x80 -> pid 27
+[syscall] pid=21 write(nr=1, a0=0x1) -> 44
+[syscall] pid=26 ax_mmap(nr=536, a0=0x10000) -> 554050781184
+[kernel] loaded ELF 'elf-slow' as pid 28 (parent 21): 16800 bytes, PML4 0xe3f000
+[user B] tick
+[syscall] pid=20 write(nr=1, a0=0x1) -> 14
+[syscall] pid=28 getpid(nr=39, a0=0x0) -> 28
+[syscall] pid=24 ax_mmap(nr=536, a0=0x20010) -> 554050846720
+[syscall] pid=28 nanosleep(nr=35, a0=0x19) -> 0
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x80000034d8) -> 28
+[elf-agent] grow: true, reuse: true, big(128KiB): true
+[syscall] pid=24 write(nr=1, a0=0x1) -> 55
+[init] spawn elf-slow rights 0x80 -> pid 28
+[syscall] pid=21 write(nr=1, a0=0x1) -> 44
+[syscall] pid=24 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 24 (parent 21) exited with code 0
+[syscall] pid=27 nanosleep(nr=35, a0=0xa) -> 0
+[elf-slow] pid 28 woke 1/2 at ~250 ms (sleep -> 0)
+[syscall] pid=28 write(nr=1, a0=0x1) -> 51
+[kernel] loaded ELF 'elf-crash' as pid 29 (parent 21): 16800 bytes, PML4 0xd5f000
+[elf-fast] pid 27 woke 1/5 at ~100 ms (sleep -> 0)
+[syscall] pid=27 write(nr=1, a0=0x1) -> 51
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x800000350f) -> 29
+[syscall] pid=26 ax_fs_read(nr=531, a0=0x8000003660) -> 61
+[syscall] pid=28 nanosleep(nr=35, a0=0x19) -> 0
+[init] spawn elf-crash rights 0x80 -> pid 29
+[syscall] pid=21 write(nr=1, a0=0x1) -> 45
+[syscall] pid=27 nanosleep(nr=35, a0=0xa) -> 0
+[kernel] loaded ELF 'elf-noperm' as pid 30 (parent 21): 16800 bytes, PML4 0xd49000
+[user A] tick
+[syscall] pid=19 write(nr=1, a0=0x1) -> 14
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x8000003518) -> 30
+[elf-slow] pid 28 woke 2/2 at ~500 ms (sleep -> 0)
+[syscall] pid=28 write(nr=1, a0=0x1) -> 51
+[syscall] pid=29 getpid(nr=39, a0=0x0) -> 29
+[init] spawn elf-noperm rights 0x0 -> pid 30
+[syscall] pid=21 write(nr=1, a0=0x1) -> 45
+[elf-fast] pid 27 woke 2/5 at ~200 ms (sleep -> 0)
+[syscall] pid=27 write(nr=1, a0=0x1) -> 51
+[syscall] pid=30 write(nr=1, a0=0x1) -> -1
+[kernel] ELF 'elf-bad-wx' failed to load: W^X violation: segment is both writable and executable
+[elf-crash] pid 29 reading a kernel address
+[syscall] pid=29 write(nr=1, a0=0x1) -> 44
+[user B] tick
+[syscall] pid=20 write(nr=1, a0=0x1) -> 14
+[syscall] pid=28 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 28 (parent 21) exited with code 0
+[workload] context: 61 bytes
+[syscall] pid=26 write(nr=1, a0=0x1) -> 29
+[syscall] pid=20 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 20 (parent 0) exited with code 0
+[syscall] pid=30 ax_spawn_module(nr=520, a0=0x8000002210) -> -1
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x8000003522) -> -8
+[syscall] pid=30 ax_spawn_module(nr=520, a0=0x8000002219) -> -1
+[init] spawn elf-bad-wx rights 0x80 -> -8 (ENOEXEC)
+[syscall] pid=21 write(nr=1, a0=0x1) -> 52
+[syscall] pid=30 ax_fs_list(nr=530, a0=0x803ffff8c8) -> -1
+[user A] tick
+[syscall] pid=19 write(nr=1, a0=0x1) -> 14
+[syscall] pid=27 nanosleep(nr=35, a0=0xa) -> 0
+[workload] request: 219 bytes
+[syscall] pid=26 write(nr=1, a0=0x1) -> 30
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x800000352c) -> -2
+[elf-fast] pid 27 woke 3/5 at ~300 ms (sleep -> 0)
+[syscall] pid=27 write(nr=1, a0=0x1) -> 51
+[init] spawn no-such-program rights 0x80 -> -2 (ENOENT)
+[syscall] pid=21 write(nr=1, a0=0x1) -> 56
+[syscall] pid=30 ax_fs_read(nr=531, a0=0x8000002223) -> -1
+[syscall] pid=27 nanosleep(nr=35, a0=0xa) -> 0
+[syscall] pid=30 ax_fs_write(nr=532, a0=0x800000223f) -> -1
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x80000034cf) -> -1
+[syscall] pid=30 ax_fs_delete(nr=533, a0=0x8000002223) -> -1
+[kernel] pid=29 killed: page fault in ring 3 at rip=0x800000119b (0xffff800000100000)
+[kernel] pid 29 (parent 21) killed by signal 11
+[init] spawn elf-hello rights 0x2000080 -> -1 (EPERM)
+[syscall] pid=21 write(nr=1, a0=0x1) -> 54
+[elf-fast] pid 27 woke 4/5 at ~400 ms (sleep -> 0)
+[syscall] pid=27 write(nr=1, a0=0x1) -> 51
+[kernel] release pid 22: aspace 14 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=21 wait4(nr=61, a0=0x16) -> 22
+[syscall] pid=27 nanosleep(nr=35, a0=0xa) -> 0
+[init] reaped pid 22: exited with code 0
+[syscall] pid=21 write(nr=1, a0=0x1) -> 41
+[kernel] release pid 23: aspace 20 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=21 wait4(nr=61, a0=0xffffffffffffffff) -> 23
+[init] reaped pid 23: exited with code 0
+[syscall] pid=21 write(nr=1, a0=0x1) -> 41
+[user A] tick
+[syscall] pid=19 write(nr=1, a0=0x1) -> 14
+[elf-fast] pid 27 woke 5/5 at ~500 ms (sleep -> 0)
+[syscall] pid=27 write(nr=1, a0=0x1) -> 51
+[syscall] pid=19 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 19 (parent 0) exited with code 0
+[syscall] pid=30 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 30 (parent 21) exited with code 0
+[kernel] release pid 24: aspace 66 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=21 wait4(nr=61, a0=0xffffffffffffffff) -> 24
+[init] reaped pid 24: exited with code 0
+[syscall] pid=21 write(nr=1, a0=0x1) -> 41
+[kernel] release pid 28: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=21 wait4(nr=61, a0=0xffffffffffffffff) -> 28
+[init] reaped pid 28: exited with code 0
+[syscall] pid=21 write(nr=1, a0=0x1) -> 41
+[kernel] release pid 29: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=21 wait4(nr=61, a0=0xffffffffffffffff) -> 29
+[init] reaped pid 29: killed by signal 11
+[syscall] pid=21 write(nr=1, a0=0x1) -> 42
+[kernel] release pid 30: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=21 wait4(nr=61, a0=0xffffffffffffffff) -> 30
+[init] reaped pid 30: exited with code 0
+[syscall] pid=21 write(nr=1, a0=0x1) -> 41
+[syscall] pid=27 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 27 (parent 21) exited with code 0
+[syscall] pid=25 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[kernel] release pid 27: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=21 wait4(nr=61, a0=0xffffffffffffffff) -> 27
+[init] reaped pid 27: exited with code 0
+[syscall] pid=21 write(nr=1, a0=0x1) -> 41
+[egress] pid 26 petition sha256 198f50b381283918..
+[elf-egress] petition 0 -> 420 bytes
+[syscall] pid=25 write(nr=1, a0=0x1) -> 37
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 555
+[workload] petition 0 -> 555: {"content":"Your phrase \"Axiom-X constitutional compute: governed, evid
+[syscall] pid=26 write(nr=1, a0=0x1) -> 103
+[egress] pid 25 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=25 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 1 -> 420 bytes
+[syscall] pid=25 write(nr=1, a0=0x1) -> 37
+[egress] pid 25 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=25 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 2 -> 420 bytes
+[syscall] pid=25 write(nr=1, a0=0x1) -> 37
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 546
+[egress] pid 25 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=25 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 3 -> 420 bytes
+[syscall] pid=25 write(nr=1, a0=0x1) -> 37
+[egress] pid 25 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=25 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 4 -> 420 bytes
+[syscall] pid=25 write(nr=1, a0=0x1) -> 37
+[egress] pid 25 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=25 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 5 -> 420 bytes
+[syscall] pid=25 write(nr=1, a0=0x1) -> 37
+[egress] pid 25 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=25 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 6 -> 420 bytes
+[syscall] pid=25 write(nr=1, a0=0x1) -> 37
+[egress] pid 25 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=25 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 7 -> 420 bytes
+[syscall] pid=25 write(nr=1, a0=0x1) -> 37
+[egress] pid 26 petition sha256 198f50b381283918..
+[elf-egress] 8 allowed, 0 rate-limited
+[syscall] pid=25 write(nr=1, a0=0x1) -> 39
+[elf-egress] host says: {"data":[{"aliases":["gpt-4.1-mini","smart-cheap"],"created":1793147832,"display
+[syscall] pid=25 write(nr=1, a0=0x1) -> 105
+[syscall] pid=25 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 25 (parent 21) exited with code 0
+[kernel] release pid 25: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=21 wait4(nr=61, a0=0xffffffffffffffff) -> 25
+[init] reaped pid 25: exited with code 0
+[syscall] pid=21 write(nr=1, a0=0x1) -> 41
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 556
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 553
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 547
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 556
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 563
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 559
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 559
+[workload] petition 8 -> 559: {"content":"Your phrase \"Axiom-X constitutional compute: governed, evid
+[syscall] pid=26 write(nr=1, a0=0x1) -> 103
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 543
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 548
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 552
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 563
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 543
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 562
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 562
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 553
+[workload] petition 16 -> 553: {"content":"Your phrase \"Axiom-X constitutional compute: governed, evid
+[syscall] pid=26 write(nr=1, a0=0x1) -> 104
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 542
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 552
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 562
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 554
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 556
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 546
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 564
+[egress] pid 26 petition sha256 198f50b381283918..
+[syscall] pid=26 ax_egress(nr=537, a0=0x8100000420) -> 546
+[workload] petition 24 -> 546: {"content":"The phrase **\"Axiom-X constitutional compute: governed, evi
+[syscall] pid=26 write(nr=1, a0=0x1) -> 104
+[syscall] pid=26 ax_fs_write(nr=532, a0=0x8000003758) -> 0
+[workload] done: petitions=25 allowed=25 rate_limited_retries=0 failed=0
+[syscall] pid=26 write(nr=1, a0=0x1) -> 73
+[syscall] pid=26 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 26 (parent 21) exited with code 0
+[kernel] release pid 26: aspace 32 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=21 wait4(nr=61, a0=0xffffffffffffffff) -> 26
+[init] reaped pid 26: exited with code 0
+[syscall] pid=21 write(nr=1, a0=0x1) -> 41
+[kernel] loaded ELF 'elf-audit' as pid 31 (parent 21): 25048 bytes, PML4 0xe07000
+[syscall] pid=31 getpid(nr=39, a0=0x0) -> 31
+[audit] pid 31: verifying ledger records 324..724 (of 724)
+[syscall] pid=31 write(nr=1, a0=0x1) -> 59
+[syscall] pid=21 ax_spawn_module(nr=520, a0=0x80000036c0) -> 31
+[audit] chain intact: 400 records, head 32152952d595642e... (denies 10, faults 2, creates 14, reaps 15)
+[syscall] pid=31 write(nr=1, a0=0x1) -> 104
+[audit] forged record 524 detected: yes
+[syscall] pid=31 write(nr=1, a0=0x1) -> 40
+[audit] ledger audit: PASS
+[syscall] pid=31 write(nr=1, a0=0x1) -> 27
+[syscall] pid=31 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 31 (parent 21) exited with code 0
+[kernel] release pid 31: aspace 15 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=21 wait4(nr=61, a0=0x1f) -> 31
+[syscall] pid=21 wait4(nr=61, a0=0xffffffffffffffff) -> -10
+[init] all children reaped: 9/9 (exit 0: 8, signaled: 1); expected spawn failures: 3/3; audit ok: true; wait(-1) now -> Err(-10)
+[syscall] pid=21 write(nr=1, a0=0x1) -> 129
+[init] process-lifecycle check: PASS
+[syscall] pid=21 write(nr=1, a0=0x1) -> 37
+[syscall] pid=21 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 21 (parent 0) exited with code 0
+[kernel] release pid 17: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 18: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 19: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 20: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 21: aspace 14 + kstack 16 frames (owned 0 / 16384)
+[ledger] persisted 550 new records to disk
+[kernel] ledger: 1346 records, head 32551a390b2f4bae...
+[kernel] round 2: kernel started 5, kernel reaped 5 (118 frames); 1 process records left; frames in use 283 -> 283
+[kernel] === round 3: frames in use 283 ===
+[kernel] spawned 'hello' as pid 32: 171 bytes embedded, PML4 0xcb8000
+hello from ring 3
+[syscall] pid=32 write(nr=1, a0=0x1) -> 18
+[syscall] pid=32 write(nr=1, a0=0x1) -> -14
+ring 3: kernel pointer refused with -EFAULT
+[syscall] pid=32 write(nr=1, a0=0x1) -> 44
+[kernel] spawned 'probe' as pid 33: 27 bytes embedded, PML4 0xcc8000
+[kernel] pid=33 killed: page fault in ring 3 at rip=0x800000000a (0xffff800000100000)
+[kernel] pid 33 (parent 0) killed by signal 11
+[syscall] pid=32 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 32 (parent 0) exited with code 0
+[kernel] spawned 'spin-A' as pid 34: 74 bytes embedded, PML4 0xce4000
+[kernel] spawned 'spin-B' as pid 35: 74 bytes embedded, PML4 0xcfa000
+[user A] tick
+[syscall] pid=34 write(nr=1, a0=0x1) -> 14
+[user B] tick
+[syscall] pid=35 write(nr=1, a0=0x1) -> 14
+[user A] tick
+[syscall] pid=34 write(nr=1, a0=0x1) -> 14
+[kernel] loaded ELF 'elf-init' as pid 36 (parent 0): 20952 bytes, PML4 0xd10000
+[syscall] pid=36 getpid(nr=39, a0=0x0) -> 36
+[init] user-space init running as pid 36
+[syscall] pid=36 write(nr=1, a0=0x1) -> 41
+[user B] tick
+[syscall] pid=35 write(nr=1, a0=0x1) -> 14
+[kernel] loaded ELF 'elf-hello' as pid 37 (parent 36): 16880 bytes, PML4 0xd6a000
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x80000034cf) -> 37
+[init] spawn elf-hello rights 0x80 -> pid 37
+[syscall] pid=36 write(nr=1, a0=0x1) -> 45
+[syscall] pid=37 getpid(nr=39, a0=0x0) -> 37
+[kernel] loaded ELF 'elf-heap' as pid 38 (parent 36): 16800 bytes, PML4 0xe08000
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x80000034e0) -> 38
+[init] spawn elf-heap rights 0xa0 -> pid 38
+[syscall] pid=36 write(nr=1, a0=0x1) -> 44
+[user B] tick
+[syscall] pid=35 write(nr=1, a0=0x1) -> 14
+[syscall] pid=38 getpid(nr=39, a0=0x0) -> 38
+[elf-heap] pid 38: AX_MMAP self-test
+[syscall] pid=38 write(nr=1, a0=0x1) -> 37
+[kernel] loaded ELF 'elf-agent' as pid 39 (parent 36): 25304 bytes, PML4 0xe63000
+[elf-hello] pid 37: Rust ELF running in ring 3
+[syscall] pid=37 write(nr=1, a0=0x1) -> 47
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x80000034f0) -> 39
+[init] spawn elf-agent rights 0xa0 -> pid 39
+[syscall] pid=36 write(nr=1, a0=0x1) -> 45
+[elf-hello] .data initialized: true, .bss zeroed: true
+[syscall] pid=37 write(nr=1, a0=0x1) -> 55
+[syscall] pid=39 getpid(nr=39, a0=0x0) -> 39
+[user A] tick
+[syscall] pid=34 write(nr=1, a0=0x1) -> 14
+[kernel] loaded ELF 'elf-egress' as pid 40 (parent 36): 16800 bytes, PML4 0xde2000
+[elf-hello] back after sched_yield, exiting
+[syscall] pid=37 write(nr=1, a0=0x1) -> 44
+[syscall] pid=40 getpid(nr=39, a0=0x0) -> 40
+[syscall] pid=39 ax_mmap(nr=536, a0=0x10000) -> 554050781184
+[syscall] pid=37 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 37 (parent 36) exited with code 0
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x80000034f9) -> 40
+[init] spawn elf-egress rights 0x10080 -> pid 40
+[syscall] pid=36 write(nr=1, a0=0x1) -> 49
+[elf-agent] pid 39: heap-backed collections
+[syscall] pid=39 write(nr=1, a0=0x1) -> 44
+[kernel] loaded ELF 'elf-workload' as pid 41 (parent 36): 21184 bytes, PML4 0xd50000
+[syscall] pid=38 ax_mmap(nr=536, a0=0x3000) -> 554050781184
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x8000003503) -> 41
+[elf-egress] pid 40: governed egress petition
+[syscall] pid=40 write(nr=1, a0=0x1) -> 46
+[syscall] pid=38 ax_mmap(nr=536, a0=0x2000) -> 554050793472
+[user B] tick
+[syscall] pid=35 write(nr=1, a0=0x1) -> 14
+[egress] pid 40 petition sha256 d1bba6bee60f1d77..
+[init] spawn elf-workload rights 0x100a6 -> pid 41
+[syscall] pid=36 write(nr=1, a0=0x1) -> 51
+[elf-heap] base 0x8100000000, growth disjoint: true, zeroed: true, rw: true
+[syscall] pid=38 write(nr=1, a0=0x1) -> 76
+[kernel] loaded ELF 'elf-fast' as pid 42 (parent 36): 16800 bytes, PML4 0xe2d000
+[syscall] pid=39 ax_mmap(nr=536, a0=0x20010) -> 554050846720
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x80000034e8) -> 42
+[syscall] pid=38 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 38 (parent 36) exited with code 0
+[init] spawn elf-fast rights 0x80 -> pid 42
+[syscall] pid=36 write(nr=1, a0=0x1) -> 44
+[syscall] pid=41 getpid(nr=39, a0=0x0) -> 41
+[kernel] loaded ELF 'elf-slow' as pid 43 (parent 36): 16800 bytes, PML4 0xdad000
+[user A] tick
+[syscall] pid=34 write(nr=1, a0=0x1) -> 14
+[syscall] pid=43 getpid(nr=39, a0=0x0) -> 43
+[elf-agent] grow: true, reuse: true, big(128KiB): true
+[syscall] pid=39 write(nr=1, a0=0x1) -> 55
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x80000034d8) -> 43
+[syscall] pid=39 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 39 (parent 36) exited with code 0
+[syscall] pid=42 getpid(nr=39, a0=0x0) -> 42
+[init] spawn elf-slow rights 0x80 -> pid 43
+[syscall] pid=36 write(nr=1, a0=0x1) -> 44
+[user B] tick
+[syscall] pid=35 write(nr=1, a0=0x1) -> 14
+[syscall] pid=43 nanosleep(nr=35, a0=0x19) -> 0
+[syscall] pid=35 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 35 (parent 0) exited with code 0
+[workload] pid 41: governed agent run
+[syscall] pid=41 write(nr=1, a0=0x1) -> 38
+[syscall] pid=42 nanosleep(nr=35, a0=0xa) -> 0
+[elf-slow] pid 43 woke 1/2 at ~250 ms (sleep -> 0)
+[syscall] pid=43 write(nr=1, a0=0x1) -> 51
+[kernel] loaded ELF 'elf-crash' as pid 44 (parent 36): 16800 bytes, PML4 0xd93000
+[syscall] pid=43 nanosleep(nr=35, a0=0x19) -> 0
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x800000350f) -> 44
+[syscall] pid=41 ax_mmap(nr=536, a0=0x10000) -> 554050781184
+[init] spawn elf-crash rights 0x80 -> pid 44
+[syscall] pid=36 write(nr=1, a0=0x1) -> 45
+[syscall] pid=41 ax_fs_read(nr=531, a0=0x8000003660) -> 61
+[user A] tick
+[syscall] pid=34 write(nr=1, a0=0x1) -> 14
+[syscall] pid=44 getpid(nr=39, a0=0x0) -> 44
+[syscall] pid=34 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 34 (parent 0) exited with code 0
+[elf-crash] pid 44 reading a kernel address
+[syscall] pid=44 write(nr=1, a0=0x1) -> 44
+[kernel] loaded ELF 'elf-noperm' as pid 45 (parent 36): 16800 bytes, PML4 0xdd2000
+[kernel] pid=44 killed: page fault in ring 3 at rip=0x800000119b (0xffff800000100000)
+[kernel] pid 44 (parent 36) killed by signal 11
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x8000003518) -> 45
+[workload] context: 61 bytes
+[syscall] pid=41 write(nr=1, a0=0x1) -> 29
+[init] spawn elf-noperm rights 0x0 -> pid 45
+[syscall] pid=36 write(nr=1, a0=0x1) -> 45
+[elf-slow] pid 43 woke 2/2 at ~500 ms (sleep -> 0)
+[syscall] pid=43 write(nr=1, a0=0x1) -> 51
+[workload] request: 219 bytes
+[syscall] pid=41 write(nr=1, a0=0x1) -> 30
+[kernel] ELF 'elf-bad-wx' failed to load: W^X violation: segment is both writable and executable
+[elf-fast] pid 42 woke 1/5 at ~100 ms (sleep -> 0)
+[syscall] pid=42 write(nr=1, a0=0x1) -> 51
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x8000003522) -> -8
+[syscall] pid=43 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 43 (parent 36) exited with code 0
+[init] spawn elf-bad-wx rights 0x80 -> -8 (ENOEXEC)
+[syscall] pid=36 write(nr=1, a0=0x1) -> 52
+[syscall] pid=42 nanosleep(nr=35, a0=0xa) -> 0
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x800000352c) -> -2
+[elf-fast] pid 42 woke 2/5 at ~200 ms (sleep -> 0)
+[syscall] pid=42 write(nr=1, a0=0x1) -> 51
+[syscall] pid=42 nanosleep(nr=35, a0=0xa) -> 0
+[syscall] pid=45 write(nr=1, a0=0x1) -> -1
+[syscall] pid=45 ax_spawn_module(nr=520, a0=0x8000002210) -> -1
+[init] spawn no-such-program rights 0x80 -> -2 (ENOENT)
+[syscall] pid=36 write(nr=1, a0=0x1) -> 56
+[syscall] pid=45 ax_spawn_module(nr=520, a0=0x8000002219) -> -1
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x80000034cf) -> -1
+[syscall] pid=45 ax_fs_list(nr=530, a0=0x803ffff8c8) -> -1
+[init] spawn elf-hello rights 0x2000080 -> -1 (EPERM)
+[syscall] pid=36 write(nr=1, a0=0x1) -> 54
+[kernel] release pid 37: aspace 14 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=36 wait4(nr=61, a0=0x25) -> 37
+[elf-fast] pid 42 woke 3/5 at ~300 ms (sleep -> 0)
+[syscall] pid=42 write(nr=1, a0=0x1) -> 51
+[init] reaped pid 37: exited with code 0
+[syscall] pid=36 write(nr=1, a0=0x1) -> 41
+[kernel] release pid 38: aspace 20 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=36 wait4(nr=61, a0=0xffffffffffffffff) -> 38
+[syscall] pid=45 ax_fs_read(nr=531, a0=0x8000002223) -> -1
+[syscall] pid=42 nanosleep(nr=35, a0=0xa) -> 0
+[init] reaped pid 38: exited with code 0
+[syscall] pid=36 write(nr=1, a0=0x1) -> 41
+[kernel] release pid 39: aspace 66 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=36 wait4(nr=61, a0=0xffffffffffffffff) -> 39
+[syscall] pid=45 ax_fs_write(nr=532, a0=0x800000223f) -> -1
+[init] reaped pid 39: exited with code 0
+[syscall] pid=36 write(nr=1, a0=0x1) -> 41
+[kernel] release pid 43: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=36 wait4(nr=61, a0=0xffffffffffffffff) -> 43
+[init] reaped pid 43: exited with code 0
+[syscall] pid=36 write(nr=1, a0=0x1) -> 41
+[syscall] pid=45 ax_fs_delete(nr=533, a0=0x8000002223) -> -1
+[kernel] release pid 44: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=36 wait4(nr=61, a0=0xffffffffffffffff) -> 44
+[syscall] pid=45 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 45 (parent 36) exited with code 0
+[elf-fast] pid 42 woke 4/5 at ~400 ms (sleep -> 0)
+[syscall] pid=42 write(nr=1, a0=0x1) -> 51
+[init] reaped pid 44: killed by signal 11
+[syscall] pid=36 write(nr=1, a0=0x1) -> 42
+[kernel] release pid 45: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=36 wait4(nr=61, a0=0xffffffffffffffff) -> 45
+[init] reaped pid 45: exited with code 0
+[syscall] pid=36 write(nr=1, a0=0x1) -> 41
+[syscall] pid=42 nanosleep(nr=35, a0=0xa) -> 0
+[elf-fast] pid 42 woke 5/5 at ~500 ms (sleep -> 0)
+[syscall] pid=42 write(nr=1, a0=0x1) -> 51
+[syscall] pid=42 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 42 (parent 36) exited with code 0
+[kernel] release pid 42: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=36 wait4(nr=61, a0=0xffffffffffffffff) -> 42
+[init] reaped pid 42: exited with code 0
+[syscall] pid=36 write(nr=1, a0=0x1) -> 41
+[syscall] pid=40 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 0 -> 420 bytes
+[syscall] pid=40 write(nr=1, a0=0x1) -> 37
+[egress] pid 40 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=40 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 1 -> 420 bytes
+[syscall] pid=40 write(nr=1, a0=0x1) -> 37
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 555
+[workload] petition 0 -> 555: {"content":"Your phrase “Axiom-X constitutional compute: governed, evi
+[syscall] pid=41 write(nr=1, a0=0x1) -> 103
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 552
+[egress] pid 40 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=40 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 2 -> 420 bytes
+[syscall] pid=40 write(nr=1, a0=0x1) -> 37
+[egress] pid 40 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=40 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 3 -> 420 bytes
+[syscall] pid=40 write(nr=1, a0=0x1) -> 37
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 543
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 547
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 552
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 540
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 543
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 552
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 561
+[egress] pid 40 petition sha256 d1bba6bee60f1d77..
+[workload] petition 8 -> 561: {"content":"Your phrase \"Axiom-X constitutional compute: governed, evid
+[syscall] pid=41 write(nr=1, a0=0x1) -> 103
+[syscall] pid=40 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 4 -> 420 bytes
+[syscall] pid=40 write(nr=1, a0=0x1) -> 37
+[egress] pid 40 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=40 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 5 -> 420 bytes
+[syscall] pid=40 write(nr=1, a0=0x1) -> 37
+[egress] pid 40 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=40 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[elf-egress] petition 6 -> 420 bytes
+[syscall] pid=40 write(nr=1, a0=0x1) -> 37
+[egress] pid 40 petition sha256 d1bba6bee60f1d77..
+[syscall] pid=40 ax_egress(nr=537, a0=0x80000023d5) -> 420
+[egress] pid 41 petition sha256 198f50b381283918..
+[elf-egress] petition 7 -> 420 bytes
+[syscall] pid=40 write(nr=1, a0=0x1) -> 37
+[elf-egress] 8 allowed, 0 rate-limited
+[syscall] pid=40 write(nr=1, a0=0x1) -> 39
+[elf-egress] host says: {"data":[{"aliases":["gpt-4.1-mini","smart-cheap"],"created":1793147832,"display
+[syscall] pid=40 write(nr=1, a0=0x1) -> 105
+[syscall] pid=40 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 40 (parent 36) exited with code 0
+[kernel] release pid 40: aspace 13 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=36 wait4(nr=61, a0=0xffffffffffffffff) -> 40
+[init] reaped pid 40: exited with code 0
+[syscall] pid=36 write(nr=1, a0=0x1) -> 41
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 563
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 546
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 554
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 561
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 554
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 546
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 544
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 555
+[workload] petition 16 -> 555: {"content":"Your phrase \"Axiom-X constitutional compute: governed, evid
+[syscall] pid=41 write(nr=1, a0=0x1) -> 104
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 562
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 566
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 571
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 551
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 568
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 547
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 551
+[egress] pid 41 petition sha256 198f50b381283918..
+[syscall] pid=41 ax_egress(nr=537, a0=0x8100000420) -> 552
+[workload] petition 24 -> 552: {"content":"Your phrase \"Axiom-X constitutional compute: governed, evid
+[syscall] pid=41 write(nr=1, a0=0x1) -> 104
+[syscall] pid=41 ax_fs_write(nr=532, a0=0x8000003758) -> 0
+[workload] done: petitions=25 allowed=25 rate_limited_retries=0 failed=0
+[syscall] pid=41 write(nr=1, a0=0x1) -> 73
+[syscall] pid=41 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 41 (parent 36) exited with code 0
+[kernel] release pid 41: aspace 32 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=36 wait4(nr=61, a0=0xffffffffffffffff) -> 41
+[init] reaped pid 41: exited with code 0
+[syscall] pid=36 write(nr=1, a0=0x1) -> 41
+[kernel] loaded ELF 'elf-audit' as pid 46 (parent 36): 25048 bytes, PML4 0xdb9000
+[syscall] pid=36 ax_spawn_module(nr=520, a0=0x80000036c0) -> 46
+[syscall] pid=46 getpid(nr=39, a0=0x0) -> 46
+[audit] pid 46: verifying ledger records 1143..1543 (of 1543)
+[syscall] pid=46 write(nr=1, a0=0x1) -> 62
+[audit] chain intact: 400 records, head 71d4faaa17b3fe88... (denies 10, faults 2, creates 14, reaps 15)
+[syscall] pid=46 write(nr=1, a0=0x1) -> 104
+[audit] forged record 1343 detected: yes
+[syscall] pid=46 write(nr=1, a0=0x1) -> 41
+[audit] ledger audit: PASS
+[syscall] pid=46 write(nr=1, a0=0x1) -> 27
+[syscall] pid=46 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 46 (parent 36) exited with code 0
+[kernel] release pid 46: aspace 15 + kstack 16 frames (owned 0 / 16384)
+[syscall] pid=36 wait4(nr=61, a0=0x2e) -> 46
+[syscall] pid=36 wait4(nr=61, a0=0xffffffffffffffff) -> -10
+[init] all children reaped: 9/9 (exit 0: 8, signaled: 1); expected spawn failures: 3/3; audit ok: true; wait(-1) now -> Err(-10)
+[syscall] pid=36 write(nr=1, a0=0x1) -> 129
+[init] process-lifecycle check: PASS
+[syscall] pid=36 write(nr=1, a0=0x1) -> 37
+[syscall] pid=36 exit(nr=60, a0=0x0) -> 0
+[kernel] pid 36 (parent 0) exited with code 0
+[kernel] release pid 32: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 33: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 34: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 35: aspace 6 + kstack 16 frames (owned 0 / 16384)
+[kernel] release pid 36: aspace 14 + kstack 16 frames (owned 0 / 16384)
+[ledger] persisted 562 new records to disk
+[kernel] ledger: 2165 records, head 1d6337c0f2e9c767...
+[kernel] round 3: kernel started 5, kernel reaped 5 (118 frames); 1 process records left; frames in use 283 -> 283
+[kernel] reclamation check: PASS (frames in use after each round: 283)
+[latency] after the self-tests:
+[latency] interrupts-off regions (outermost only), worst first:
+[latency]   region                  count     avg us     max us   total ms
+[latency]   kernel serial             180        842      44054        151
+[latency]   ata command               703       4076      18683       2865
+[latency]   sys wait4                  45       3529      13329        158
+[latency]   sys write                 229       1060      10588        242
+[latency]   timer tick              15726        304       8082       4790
+[latency]   sys other                 213        483       6478        103
+[latency]   allocator                 777        178       5614        138
+[latency]   sys exit                   39       1236       3255         48
+[latency]   sys getpid                 30        655       2447         19
+[latency]   sys nanosleep              21        773       1670         16
+[latency]   sys ax_get_evidence      1509         65       1246         98
+[latency]   sys ax_spawn_module        84        379       1111         31
+[latency]   sys ax_fs_read              9        543       1110          4
+[latency]   sys ax_fs_delete            3        840       1000          2
+[latency]   ledger append              75         58        913          4
+[latency]   sys ax_fs_list              3        703        747          2
+[latency]   sys ax_fs_write            11        399        658          4
+[latency]   sys sched_yield             3        251        388          0
+[latency] fs lock (sleeping): 7 acquisitions, 0 had to wait; preemptible syscalls count one row per interrupts-off segment
+[latency] tick gaps (15725 ticks): <15ms 14869, 15-25 102, 25-50 42, 50-100 615, 100-500 97, >=500 0; max 276 ms; ~5108 ticks lost
+[kernel] loaded ELF 'elf-shell' as pid 47 (parent 0): 49736 bytes, PML4 0xd2b000
+
+Axiom-X shell (pid 47). Type 'help'.
+axiom> 

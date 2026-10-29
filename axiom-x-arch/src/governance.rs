@@ -22,7 +22,7 @@ use spin::Mutex;
 
 use crate::syscall::{
     SYS_AX_FS_DELETE, SYS_AX_FS_INFO, SYS_AX_FS_INSTALL, SYS_AX_FS_LIST, SYS_AX_FS_READ, SYS_AX_FS_WRITE,
-    SYS_AX_EGRESS, SYS_AX_GET_EVIDENCE, SYS_AX_LATENCY, SYS_AX_MMAP, SYS_AX_PROC_LIST, SYS_AX_SPAWN_MODULE, SYS_CLOCK_GETTIME, SYS_EXIT, SYS_GETPID,
+    SYS_AX_BOOTCFG, SYS_AX_EGRESS, SYS_AX_GET_EVIDENCE, SYS_AX_LATENCY, SYS_AX_MMAP, SYS_AX_PROC_LIST, SYS_AX_SPAWN_MODULE, SYS_CLOCK_GETTIME, SYS_EXIT, SYS_GETPID,
     SYS_NANOSLEEP, SYS_READ, SYS_SCHED_YIELD, SYS_WAIT4, SYS_WRITE,
 };
 
@@ -50,7 +50,7 @@ pub fn required_right(nr: u64) -> Option<Rights> {
         // Talking to the outside world is the most governed action there is.
         SYS_AX_EGRESS => Some(Rights::NET),
         SYS_AX_GET_EVIDENCE => Some(Rights::EVIDENCE),
-        SYS_EXIT | SYS_GETPID | SYS_SCHED_YIELD | SYS_NANOSLEEP | SYS_WAIT4 | SYS_CLOCK_GETTIME => None,
+        SYS_EXIT | SYS_GETPID | SYS_SCHED_YIELD | SYS_NANOSLEEP | SYS_WAIT4 | SYS_CLOCK_GETTIME | SYS_AX_BOOTCFG => None,
         // Unknown calls need no right: they fail with -ENOSYS anyway.
         _ => None,
     }
@@ -118,6 +118,41 @@ pub fn record_exit(pid: u32, code: i32) {
 /// Record a reap: `by` (0 = kernel) freed `frames` owned by `child`.
 pub fn record_reap(by: u32, child: u32, frames: u64) {
     record(kind::MEMORY_FREE, decision::ALLOW, by, child, SYS_WAIT4, frames, 0, Rights::NONE);
+}
+
+/// Response attestation waiting to be appended immediately after the
+/// petition's `CONTRACT_ENFORCE` record. Staged with interrupts off, at the
+/// end of `AX_EGRESS`, so a second petition cannot overwrite it first.
+struct StagedEgress {
+    pid: u32,
+    len: u32,
+    digest: Digest,
+}
+
+static STAGED_EGRESS: Mutex<Option<StagedEgress>> = Mutex::new(None);
+
+/// Remember a response hash until [`commit_egress_response`].
+pub fn stage_egress_response(pid: u32, len: u32, digest: Digest) {
+    *STAGED_EGRESS.lock() = Some(StagedEgress { pid, len, digest });
+}
+
+/// Append the staged `EGRESS_RESPONSE` record, if the egress hook left one.
+/// No-op when the petition failed before a full payload arrived.
+pub fn commit_egress_response() {
+    let Some(s) = STAGED_EGRESS.lock().take() else {
+        return;
+    };
+    let rec = axiom_x_ledger::egress_response_record(s.pid, s.len, &s.digest);
+    record(
+        rec.kind,
+        rec.decision,
+        rec.pid,
+        rec.subject,
+        rec.nr,
+        rec.arg,
+        rec.result,
+        Rights::new(rec.rights),
+    );
 }
 
 /// (records ever appended, chain head digest).

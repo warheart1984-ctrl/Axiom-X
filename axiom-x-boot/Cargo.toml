@@ -9,6 +9,7 @@ repository = { workspace = true }
 axiom-x-math = { path = "../axiom-x-math", default-features = false }
 axiom-x-arch-traits = { path = "../axiom-x-arch-traits", default-features = false }
 axiom-x-arch = { path = "../axiom-x-arch", default-features = false }
+axiom-x-ledger = { path = "../axiom-x-ledger", default-features = false }
 multiboot2 = { workspace = true }
 x86_64 = { workspace = true, features = ["abi_x86_interrupt"] }
 bitflags = { workspace = true }
