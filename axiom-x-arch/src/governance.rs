@@ -120,6 +120,31 @@ pub fn record_reap(by: u32, child: u32, frames: u64) {
     record(kind::MEMORY_FREE, decision::ALLOW, by, child, SYS_WAIT4, frames, 0, Rights::NONE);
 }
 
+fn pack32(d: &[u8]) -> (u64, u64, u64, u64) {
+    (
+        u64::from_le_bytes(d[0..8].try_into().unwrap()),
+        u64::from_le_bytes(d[8..16].try_into().unwrap()),
+        u64::from_le_bytes(d[16..24].try_into().unwrap()),
+        u64::from_le_bytes(d[24..32].try_into().unwrap()),
+    )
+}
+
+/// Append a four-record egress attestation: `sig` is the proxy's Ed25519
+/// signature over `request_digest || response_digest`, and `egress_seq`
+/// links the group back to the syscall record that produced it.
+pub fn record_egress_attest(pid: u32, egress_seq: u64, req: &Digest, resp: &Digest, sig: &[u8; 64]) {
+    let sub = egress_seq as u32;
+    for (kind, d) in [
+        (kind::EGRESS_ATTEST_REQ, &req[..]),
+        (kind::EGRESS_ATTEST_RESP, &resp[..]),
+        (kind::EGRESS_ATTEST_SIG_LO, &sig[..32]),
+        (kind::EGRESS_ATTEST_SIG_HI, &sig[32..]),
+    ] {
+        let (nr, arg, result, bits) = pack32(d);
+        record(kind, decision::ALLOW, pid, sub, nr, arg, result as i64, Rights::new(bits));
+    }
+}
+
 /// (records ever appended, chain head digest).
 pub fn ledger_summary() -> (u64, Digest) {
     x86_64::instructions::interrupts::without_interrupts(|| {

@@ -18,3 +18,4 @@ evidence/*.img
 evidence/hyperv/
 # backups hyperv-run.ps1 -UseLedger keeps of the disk images
 evidence/*.before-hyperv
+\nevidence/proxy.key

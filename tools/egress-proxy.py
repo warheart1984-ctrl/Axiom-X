@@ -51,6 +51,20 @@ def allowed(payload: bytes) -> bool:
 # the proxy attaches `x-api-key` for the gateway's benchmark tenant.
 GATEWAY_KEY = os.environ.get("EGRESS_GATEWAY_KEY", "")
 
+# Attestation key: a 32-byte Ed25519 seed (hex) via EGRESS_PROXY_SEED.
+# When set, every RESP frame gets a 64-byte signature trailer over
+# sha256(request) || sha256(response) — the kernel appends it to its
+# own ledger, making the round trip provable without trusting this log.
+PROXY_SK = None
+seed_hex = os.environ.get("EGRESS_PROXY_SEED", "")
+if seed_hex:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    PROXY_SK = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(seed_hex))
+    pub = PROXY_SK.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+    print(f"[egress-proxy] attestation key public: {pub}", flush=True)
+
 
 def parse_request(payload: bytes):
     """Split 'METHOD PATH HTTP/1.1\\r\\nheaders\\r\\n\\r\\nbody' -> (method, path, body)."""
@@ -121,7 +135,10 @@ def serve(conn: socket.socket):
             f"[egress-proxy] petition sha256 {sha256_hex(payload)}.. "
             f"-> {len(resp)}B response sha256 {sha256_hex(resp)}.."
         )
-        conn.sendall(b"RESP" + struct.pack("<Q", len(resp)) + resp)
+        trailer = b""
+        if PROXY_SK is not None:
+            trailer = PROXY_SK.sign(hashlib.sha256(payload).digest() + hashlib.sha256(resp).digest())
+        conn.sendall(b"RESP" + struct.pack("<Q", len(resp)) + resp + trailer)
 
 
 def main():

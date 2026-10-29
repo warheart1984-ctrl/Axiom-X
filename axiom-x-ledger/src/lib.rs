@@ -41,6 +41,16 @@ pub mod kind {
     /// File system mounted (decision ALLOW) or found inconsistent with the
     /// ledger / corrupt and mounted read-only (DENY); root hash as above.
     pub const FS_MOUNT: u32 = 102;
+    /// Egress attestation, part 1 of 4: the petition's SHA-256 request
+    /// digest packed across `nr`/`arg`/`result`/`rights` (8 bytes each,
+    /// little-endian). `subject` links back to the egress syscall record.
+    pub const EGRESS_ATTEST_REQ: u32 = 103;
+    /// Part 2: the response digest, packed the same way.
+    pub const EGRESS_ATTEST_RESP: u32 = 104;
+    /// Parts 3-4: the proxy's Ed25519 signature over
+    /// `request_digest || response_digest`, low then high half.
+    pub const EGRESS_ATTEST_SIG_LO: u32 = 105;
+    pub const EGRESS_ATTEST_SIG_HI: u32 = 106;
 }
 
 /// Outcome of the decision a record describes.

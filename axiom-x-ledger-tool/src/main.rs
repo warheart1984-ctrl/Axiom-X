@@ -197,6 +197,63 @@ fn verify_ledger(image: &str, pubkey: &str, raw: bool) -> Result<(Vec<u8>, u64),
         }
     }
 
+    // Egress attestation: groups of kind 103..106 records carry the proxy's
+    // Ed25519 signature over sha256(request)||sha256(response). Verify each
+    // quad against the proxy key (env ATTEST_KEY, 64-hex public key).
+    if let Ok(pk_hex) = std::env::var("ATTEST_KEY") {
+        let unpack = |r: &Record| -> [u8; 32] {
+            let mut d = [0u8; 32];
+            d[0..8].copy_from_slice(&r.nr.to_le_bytes());
+            d[8..16].copy_from_slice(&r.arg.to_le_bytes());
+            d[16..24].copy_from_slice(&(r.result as u64).to_le_bytes());
+            d[24..32].copy_from_slice(&r.rights.to_le_bytes());
+            d
+        };
+        let pk: [u8; 32] = match unhex32(&pk_hex) {
+            Some(p) => p,
+            None => {
+                println!("FAIL: ATTEST_KEY is not a 64-hex Ed25519 public key");
+                return Err(ExitCode::from(2));
+            }
+        };
+        let mut quads: std::collections::BTreeMap<u32, [Option<Record>; 4]> = Default::default();
+        for seq in 0..c.total {
+            let (r, _) = slot(&img, seq).unwrap();
+            let idx = match r.kind {
+                axiom_x_ledger::kind::EGRESS_ATTEST_REQ => 0,
+                axiom_x_ledger::kind::EGRESS_ATTEST_RESP => 1,
+                axiom_x_ledger::kind::EGRESS_ATTEST_SIG_LO => 2,
+                axiom_x_ledger::kind::EGRESS_ATTEST_SIG_HI => 3,
+                _ => continue,
+            };
+            quads.entry(r.subject).or_default()[idx] = Some(r);
+        }
+        let (mut ok, mut bad) = (0usize, 0usize);
+        for (sub, quad) in quads {
+            let [Some(a), Some(b), Some(s1), Some(s2)] = quad else {
+                println!("FAIL: incomplete attestation group for egress seq {sub}");
+                bad += 1;
+                continue;
+            };
+            let mut msg = [0u8; 64];
+            msg[..32].copy_from_slice(&unpack(&a));
+            msg[32..].copy_from_slice(&unpack(&b));
+            let mut sig = [0u8; 64];
+            sig[..32].copy_from_slice(&unpack(&s1));
+            sig[32..].copy_from_slice(&unpack(&s2));
+            if axiom_x_ledger::ed25519::verify(&pk, &msg, &sig) {
+                ok += 1;
+            } else {
+                println!("FAIL: attestation signature invalid for egress seq {sub}");
+                bad += 1;
+            }
+        }
+        println!("egress attestations: {ok} signatures verified, {bad} invalid/incomplete");
+        if bad > 0 {
+            return Err(ExitCode::from(1));
+        }
+    }
+
     let (mut boots, mut denies) = (0, 0);
     for seq in 0..c.total {
         let (r, _) = slot(&img, seq).unwrap();

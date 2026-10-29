@@ -251,7 +251,7 @@ fn mmap_hook(pid: u32, len: u64) -> i64 {
 const COM2: u16 = 0x2f8;
 const EGRESS_REQ_MAX: usize = 4096;
 const EGRESS_RESP_MAX: usize = 8192;
-const EGRESS_TIMEOUT_NS: u64 = 10_000_000_000;
+const EGRESS_TIMEOUT_NS: u64 = 30_000_000_000;
 
 fn com2_write(bytes: &[u8]) {
     for &b in bytes {
@@ -328,6 +328,7 @@ fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u6
         return -EFAULT;
     }
     static mut REQ: [u8; EGRESS_REQ_MAX] = [0; EGRESS_REQ_MAX];
+    static mut RESP_BUF: [u8; 16384] = [0; 16384];
     unsafe {
         core::ptr::copy_nonoverlapping(req_ptr as *const u8, core::ptr::addr_of_mut!(REQ) as *mut u8, req_len as usize);
     }
@@ -353,9 +354,42 @@ fn egress_hook(pid: u32, req_ptr: u64, req_len: u64, resp_ptr: u64, resp_max: u6
     if !com2_read_exact(&mut magic, deadline) || !com2_read_exact(&mut lenb, deadline) || &magic != b"RESP" {
         return -EIO;
     }
-    let n = (u64::from_le_bytes(lenb) as usize).min(resp_max as usize);
-    if !com2_read_exact(unsafe { core::slice::from_raw_parts_mut(resp_ptr as *mut u8, n) }, deadline) {
+    let resp_len = u64::from_le_bytes(lenb) as usize;
+    let attestable = resp_len <= 16384;
+    // Read the WHOLE frame, not just what fits the caller's buffer: the
+    // proxy signed all resp_len bytes, and the signature trailer follows
+    // them — reading only the caller's share desyncs the stream and the
+    // attestation.
+    let frame = if attestable { resp_len } else { resp_len.min(resp_max as usize).min(16384) };
+    if !com2_read_exact(unsafe { &mut RESP_BUF[..frame] }, deadline) {
         return -EIO;
+    }
+    // Oversized frame: drain the rest so the trailer/next frame stays aligned.
+    let mut left = resp_len.saturating_sub(frame);
+    while left > 0 {
+        let chunk = left.min(16384);
+        if !com2_read_exact(unsafe { &mut RESP_BUF[..chunk] }, deadline) {
+            return -EIO;
+        }
+        left -= chunk;
+    }
+    let n = resp_len.min(resp_max as usize).min(frame);
+    unsafe {
+        core::ptr::copy_nonoverlapping(RESP_BUF.as_ptr(), resp_ptr as *mut u8, n);
+    }
+    // Attestation trailer: 64-byte Ed25519 signature over
+    // sha256(request) || sha256(response), when the proxy is keyed.
+    let mut sig = [0u8; 64];
+    if attestable && com2_read_exact(&mut sig, deadline) {
+        let resp_hash = axiom_x_ledger::sha256::sha256(unsafe { &RESP_BUF[..resp_len] });
+        // The syscall record is appended right after this hook returns, so
+        // it takes the ledger's next seq.
+        let egress_seq = governance::ledger_summary().0;
+        let req_hash = axiom_x_ledger::sha256::sha256(unsafe {
+            core::slice::from_raw_parts(core::ptr::addr_of!(REQ) as *const u8, req_len as usize)
+        });
+        governance::record_egress_attest(pid, egress_seq, &req_hash, &resp_hash, &sig);
+        serial_print!("[egress] pid {} attestation: proxy sig recorded (seq {})\n", pid, egress_seq);
     }
     n as i64
 }
