@@ -649,8 +649,13 @@ pub fn attach_ledger_disk() {
             }
         }
     }
+    // Signing seed resolution: boot module (override). When unset, the
+    // disk's own identity sector supplies the seed inside attach_disk.
     let key = take_ledger_key();
-    match governance::signer_public_of(key.as_ref()) {
+    let report = governance::persist_init(key);
+    // Report the signer actually in effect — module key, disk identity,
+    // or a seed minted for a fresh disk.
+    match governance::signer_public() {
         Some(pk) => {
             let mut hex = [0u8; 64];
             for (i, b) in pk.iter().enumerate() {
@@ -658,13 +663,12 @@ pub fn attach_ledger_disk() {
                 hex[2 * i + 1] = b"0123456789abcdef"[(b & 15) as usize];
             }
             serial_print!(
-                "[ledger] signing key provisioned; public key {}\n",
+                "[ledger] signing key active; public key {}\n",
                 core::str::from_utf8(&hex).unwrap_or("?")
             );
         }
         None => serial_puts("[ledger] no signing key provisioned: checkpoints are unsigned\n"),
     }
-    let report = governance::persist_init(key);
     let recovery = match report {
         PersistReport::Resumed { recovery, .. } | PersistReport::Refused { recovery, .. } => Some(recovery),
         _ => None,
@@ -712,6 +716,16 @@ pub fn attach_ledger_disk() {
                 reason
             ),
         },
+    }
+    // Persist the signing identity on the disk itself after a healthy
+    // mount — never on a refused disk (it stays untouched).
+    if let Some(k) = &governance::signer_seed().or(key) {
+        let mounted = matches!(report, PersistReport::Formatted { .. } | PersistReport::Resumed { .. });
+        if mounted && governance::read_disk_identity().is_none() {
+            if governance::provision_disk_identity(k) {
+                serial_puts("[ledger] signing identity written to disk identity sector\n");
+            }
+        }
     }
 }
 

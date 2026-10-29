@@ -145,6 +145,63 @@ pub fn record_egress_attest(pid: u32, egress_seq: u64, req: &Digest, resp: &Dige
     }
 }
 
+/// Read the disk-carried signing identity (sector `IDENTITY_SECTOR`):
+/// `AXIDENT1` | seed[32] | pubkey[32] | sha256(seed||pubkey)[0..16] | pad.
+/// Returns the seed when the block is intact, `None` otherwise.
+pub fn read_disk_identity() -> Option<[u8; 32]> {
+    let mut s = [0u8; store::SECTOR];
+    ata::read_sector(store::IDENTITY_SECTOR, &mut s).ok()?;
+    if s[..8] != store::IDENTITY_MAGIC {
+        return None;
+    }
+    if axiom_x_ledger::sha256::sha256(&s[8..72])[..16] != s[72..88] {
+        return None;
+    }
+    Some(s[8..40].try_into().unwrap())
+}
+
+/// Persist the signing identity on the disk itself. Called after a
+/// successful mount; a no-op when the sector already holds a valid identity.
+pub fn provision_disk_identity(seed: &[u8; 32]) -> bool {
+    if read_disk_identity().is_some() {
+        return true;
+    }
+    let pk = axiom_x_ledger::ed25519::Keypair::from_seed(seed).public;
+    let mut s = [0u8; store::SECTOR];
+    s[..8].copy_from_slice(&store::IDENTITY_MAGIC);
+    s[8..40].copy_from_slice(seed);
+    s[40..72].copy_from_slice(&pk);
+    let sum = axiom_x_ledger::sha256::sha256(&s[8..72]);
+    s[72..88].copy_from_slice(&sum[..16]);
+    ata::write_sector(store::IDENTITY_SECTOR, &s).is_ok() && ata::flush().is_ok()
+}
+
+/// The seed behind the active signer, when known (module key, disk
+/// identity, or a minted fresh-disk seed).
+pub fn signer_seed() -> Option<[u8; 32]> {
+    *SIGNER_SEED.lock()
+}
+
+/// True when the ledger disk has no superblock magic — a candidate for
+/// provisioning a fresh signing identity at format time.
+pub fn ledger_disk_blank() -> bool {
+    let mut s = [0u8; store::SECTOR];
+    if ata::read_sector(0, &mut s).is_err() {
+        return false;
+    }
+    s[..8] != store::MAGIC
+}
+
+/// Dev entropy for a per-disk signing seed: hashes the cycle counter and
+/// monotonic clock. Fine for QEMU evidence; not a production CSPRNG.
+pub fn dev_identity_seed() -> [u8; 32] {
+    let mut buf = [0u8; 24];
+    buf[..8].copy_from_slice(&crate::clock::rdtsc().to_le_bytes());
+    buf[8..16].copy_from_slice(&crate::clock::monotonic_ns().to_le_bytes());
+    buf[16..24].copy_from_slice(&crate::clock::rdtsc().wrapping_add(0x9e3779b9).to_le_bytes());
+    axiom_x_ledger::sha256::sha256(&buf)
+}
+
 /// (records ever appended, chain head digest).
 pub fn ledger_summary() -> (u64, Digest) {
     x86_64::instructions::interrupts::without_interrupts(|| {
@@ -174,6 +231,7 @@ use axiom_x_ledger::verify_window;
 /// The ledger signing key for this boot (provisioned at boot; never leaves
 /// kernel memory; `Keypair` wipes itself on drop).
 static SIGNER: Mutex<Option<Keypair>> = Mutex::new(None);
+static SIGNER_SEED: Mutex<Option<[u8; 32]>> = Mutex::new(None);
 
 /// Public key a seed would yield (for reporting before `persist_init`).
 pub fn signer_public_of(seed: Option<&[u8; 32]>) -> Option<[u8; 32]> {
@@ -330,6 +388,7 @@ fn read_slot(seq: u64, cache: &mut (u64, [u8; store::SECTOR])) -> Option<(Record
 /// signer's public key (0 = unsigned).
 pub fn persist_init(key_seed: Option<[u8; 32]>) -> PersistReport {
     *SIGNER.lock() = key_seed.map(|seed| Keypair::from_seed(&seed));
+    *SIGNER_SEED.lock() = key_seed;
     let report = attach_disk();
     let (boot_no, resumed) = match report {
         PersistReport::Formatted { .. } => (1, 0),
@@ -370,6 +429,18 @@ fn attach_disk() -> PersistReport {
         Ok(n) => n,
         Err(e) => return PersistReport::NoDisk(e),
     };
+    // Disk-carried signing identity: when no boot-module key set the
+    // signer, the disk's own identity sector supplies the seed — or a
+    // fresh one is minted for a never-formatted disk.
+    if signer_public().is_none() {
+        let seed = read_disk_identity().or_else(|| {
+            if ledger_disk_blank() { Some(dev_identity_seed()) } else { None }
+        });
+        if let Some(s) = seed {
+            *SIGNER.lock() = Some(Keypair::from_seed(&s));
+            *SIGNER_SEED.lock() = Some(s);
+        }
+    }
     let capacity = store::capacity(sectors);
     let mut recovery = Recovery::default();
     let refused = |reason, broken_at, recovery| PersistReport::Refused { reason, broken_at, recovery };
@@ -421,7 +492,7 @@ fn attach_disk() -> PersistReport {
         // *validly signed* checkpoint claiming more records, this superblock
         // is stale: silently dropping signed history must not pass.
         if let Some(pk) = signer_public() {
-            for i in sb.archived..store::CHECKPOINT_SECTORS {
+            for i in sb.archived..(store::IDENTITY_SECTOR - store::CHECKPOINT_BASE) {
                 let mut sector = [0u8; store::SECTOR];
                 if ata::read_sector(store::CHECKPOINT_BASE + i, &mut sector).is_err() {
                     break;
@@ -495,7 +566,7 @@ fn write_checkpoint(total: u64, head: Digest) -> Result<(), &'static str> {
     };
     let mut c = Checkpoint::unsigned(total, head, boots);
     sign_checkpoint(&mut c);
-    let archived = if archived < store::CHECKPOINT_SECTORS {
+    let archived = if archived < store::IDENTITY_SECTOR - store::CHECKPOINT_BASE {
         ata::write_sector(store::CHECKPOINT_BASE + archived, &c.encode_archive()).map_err(|_| "archive write failed")?;
         archived + 1
     } else {

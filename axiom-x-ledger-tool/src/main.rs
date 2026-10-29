@@ -68,7 +68,22 @@ fn pick(img: &[u8]) -> Pick {
     store::pick_superblock(dec(0), dec(1))
 }
 
-fn cmd_pubkey(seed_path: &str) -> ExitCode {
+fn cmd_pubkey(path: &str) -> ExitCode {
+    // A disk image carries its identity in sector IDENTITY_SECTOR:
+    // AXIDENT1 | seed | pubkey | checksum — print the pubkey field.
+    if let Ok(img) = std::fs::read(path) {
+        let off = (store::IDENTITY_SECTOR as usize) * store::SECTOR;
+        if img.len() > off + store::SECTOR && img[off..off + 8] == store::IDENTITY_MAGIC {
+            let mut pubk = [0u8; 32];
+            pubk.copy_from_slice(&img[off + 40..off + 72]);
+            println!("{}", hex(&pubk));
+            return ExitCode::SUCCESS;
+        }
+    }
+    cmd_pubkey_seed(path)
+}
+
+fn cmd_pubkey_seed(seed_path: &str) -> ExitCode {
     match std::fs::read(seed_path) {
         Ok(b) if b.len() == 32 => {
             let seed: [u8; 32] = b.as_slice().try_into().unwrap();

@@ -48,7 +48,9 @@ fi
 # module (the kernel copies it, then wipes the module's memory). Generated
 # on first use; LEDGER_KEY=none boots without a key (unsigned checkpoints).
 # Publish the public key (`ledger-tool pubkey <key>`), never the seed.
-LEDGER_KEY="${LEDGER_KEY:-evidence/ledger.key}"
+# Default: the disk carries its own signing identity (sector 259); set
+# LEDGER_KEY=<seed-file> to override with a boot-module key instead.
+LEDGER_KEY="${LEDGER_KEY:-none}"
 rm -f evidence/iso/boot/ledger.key
 if [ "$LEDGER_KEY" != "none" ]; then
     [ -f "$LEDGER_KEY" ] || head -c 32 /dev/urandom > "$LEDGER_KEY"

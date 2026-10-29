@@ -40,6 +40,10 @@ pub const JOURNAL_DATA_SECTOR: u64 = 3;
 pub const CHECKPOINT_BASE: u64 = 4;
 pub const CHECKPOINT_SECTORS: u64 = 256;
 pub const RECORD_BASE: u64 = CHECKPOINT_BASE + CHECKPOINT_SECTORS;
+/// Last archive-sector slot, reserved for the disk's signing identity
+/// instead of a checkpoint. `archived` therefore caps at 255.
+pub const IDENTITY_SECTOR: u64 = CHECKPOINT_BASE + CHECKPOINT_SECTORS - 1;
+pub const IDENTITY_MAGIC: [u8; 8] = *b"AXIDENT1";
 
 const JOURNAL_MAGIC: [u8; 8] = *b"AXJRNL01";
 const CHECKPOINT_MAGIC: [u8; 8] = *b"AXCKPT01";
