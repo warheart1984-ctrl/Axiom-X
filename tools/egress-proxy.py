@@ -91,6 +91,21 @@ def forward(payload: bytes) -> bytes:
         return f"HTTP/1.1 503 Proxy Error\r\n\r\n{e}".encode()
 
 
+import hashlib
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def log_line(line: str):
+    # The proxy injects the tenant key — it must never reach this log.
+    # Redact rather than trust the call sites.
+    if GATEWAY_KEY and GATEWAY_KEY in line:
+        line = line.replace(GATEWAY_KEY, "***")
+    print(line, flush=True)
+
+
 def serve(conn: socket.socket):
     conn.settimeout(30)
     while True:
@@ -101,9 +116,11 @@ def serve(conn: socket.socket):
         if n == 0 or n > MAX_FRAME:
             raise ValueError(f"bad frame length {n}")
         payload = read_exact(conn, n)
-        import hashlib
-        print(f"[egress-proxy] petition sha256 {hashlib.sha256(payload).hexdigest()[:16]}..", flush=True)
         resp = forward(payload)
+        log_line(
+            f"[egress-proxy] petition sha256 {sha256_hex(payload)}.. "
+            f"-> {len(resp)}B response sha256 {sha256_hex(resp)}.."
+        )
         conn.sendall(b"RESP" + struct.pack("<Q", len(resp)) + resp)
 
 

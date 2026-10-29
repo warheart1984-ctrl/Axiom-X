@@ -126,11 +126,29 @@ if [ -f evidence/serial-mb2.log ]; then
     mv evidence/serial-mb2.log "evidence/serial-mb2-$(date +%Y%m%d-%H%M%S).log"
 fi
 
+# Egress proxy: when EGRESS_PROXY=1 (or EGRESS_GATEWAY_KEY is set), run the
+# host proxy for this boot and keep its log as committed evidence, so the
+# COM2 side of a petition is never lost the way serial was.
+PROXY_LOG=""
+if [ "${EGRESS_PROXY:-0}" = 1 ] || [ -n "${EGRESS_GATEWAY_KEY:-}" ]; then
+    PROXY_LOG="evidence/proxy-$(date +%Y%m%d-%H%M%S).log"
+    EGRESS_GATEWAY_KEY="${EGRESS_GATEWAY_KEY:-}" python3 tools/egress-proxy.py "${PROXY_UPSTREAM:-http://127.0.0.1:8080}" \
+        > "$PROXY_LOG" 2>&1 &
+    PROXY_PID=$!
+    sleep 1
+fi
+
 timeout "$SECS" qemu-system-x86_64 -cdrom "$ISO" -boot d \
     -drive "file=$LEDGER_DISK,format=raw,if=ide,index=0,media=disk,cache=writethrough" \
     -drive "file=$FS_DISK,format=raw,if=ide,index=1,media=disk,cache=writethrough" \
     -serial file:evidence/serial-mb2.log -serial tcp:127.0.0.1:4445,server,nowait -display none -no-reboot \
     -d int,cpu_reset -D evidence/qemu-mb2.log -m 256M || true
+
+if [ -n "$PROXY_LOG" ]; then
+    kill "$PROXY_PID" 2>/dev/null || true
+    echo "=== proxy ($PROXY_LOG) ==="
+    tail -20 "$PROXY_LOG"
+fi
 
 echo "=== serial ==="
 tr -d '\r' < evidence/serial-mb2.log
