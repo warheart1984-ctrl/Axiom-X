@@ -18,7 +18,7 @@
 use axiom_x_user::{entry, errno, getpid, println, spawn, wait, ExitStatus, Rights};
 
 /// (module, rights granted, expected spawn result: 0 = success, else -errno)
-const PROGRAMS: [(&str, Rights, i64); 12] = [
+const PROGRAMS: [(&str, Rights, i64); 13] = [
     ("elf-hello", Rights::SEND, 0),
     ("elf-heap", Rights::new(Rights::SEND.bits() | Rights::ALLOC.bits()), 0),
     ("elf-agent", Rights::new(Rights::SEND.bits() | Rights::ALLOC.bits()), 0),
@@ -34,6 +34,7 @@ const PROGRAMS: [(&str, Rights, i64); 12] = [
     ("elf-slow", Rights::SEND, 0),
     ("elf-crash", Rights::SEND, 0),
     ("elf-noperm", Rights::NONE, 0),
+    ("elf-jailbreak", Rights::SEND, 0),
     ("elf-bad-wx", Rights::SEND, -errno::ENOEXEC),
     ("no-such-program", Rights::SEND, -errno::ENOENT),
     // Escalation: init does not hold IO_PORT, so it cannot grant it.
