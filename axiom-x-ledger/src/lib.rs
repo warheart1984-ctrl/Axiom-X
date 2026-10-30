@@ -51,6 +51,14 @@ pub mod kind {
     /// `request_digest || response_digest`, low then high half.
     pub const EGRESS_ATTEST_SIG_LO: u32 = 105;
     pub const EGRESS_ATTEST_SIG_HI: u32 = 106;
+    /// axiom-lsm (Linux BPF-LSM port): a decision at an LSM hook.
+    /// `nr` = hook number (1 = socket_create, 2 = task_alloc),
+    /// `pid`/`subject` = kernel-visible tgid, `arg` = hook argument,
+    /// `rights` = task's mask, `result` = 0 / -EPERM.
+    pub const LSM_AUDIT: u32 = 107;
+    /// axiom-lsm: a forking task passed its rights mask to a child
+    /// (`subject` = child tgid); decision ALLOW.
+    pub const LSM_INHERIT: u32 = 108;
 }
 
 /// Outcome of the decision a record describes.
